@@ -281,5 +281,5 @@ function stepDone() {
 }
 
 function avatarFor(p) {
-  return `<span class="avatar" style="background:var(--red)">${esc((p.full_name || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase())}</span>`;
+  return `<span class="avatar" style="background:var(--accent)">${esc((p.full_name || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase())}</span>`;
 }

@@ -9,8 +9,9 @@ Built for a hackathon. Contract templates are placeholders, not legal documents.
 | Path | What it is |
 |---|---|
 | `index.html` | The page that loads the app |
-| `css/brand.css` | **Colors, fonts, roundness.** Change these to rebrand |
-| `js/brand.js` | **The app's name and welcome text** |
+| `css/brand.css` | **Colors, fonts, roundness.** Change these to rebrand (white and blue #002AA7, Butler for titles) |
+| `fonts/butler/` | The Butler typeface by Fabian De Smet, with its licence. Free licence: keep the files unmodified, keep the licence, and keep the credit link on the welcome screen |
+| `js/brand.js` | **The app's name and slogan** |
 | `js/config.js` | Connection to your Supabase project |
 | `js/schools.js` | Live school lists: French ministry open data, the worldwide ROR registry, the national address search |
 | `js/views/` | One file per screen (onboarding, discover, chat, contract, profile, admin) |

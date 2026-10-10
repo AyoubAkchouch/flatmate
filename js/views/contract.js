@@ -86,7 +86,7 @@ export async function renderContract(id) {
       const pad = signaturePad(canvas);
       document.getElementById("clear").onclick = () => pad.clear();
       document.getElementById("sign").onclick = async (e) => {
-        if (pad.isEmpty()) { canvas.style.borderColor = "var(--red)"; toast("Draw your signature in the box first.", "err"); return; }
+        if (pad.isEmpty()) { canvas.style.borderColor = "var(--danger)"; toast("Draw your signature in the box first.", "err"); return; }
         e.target.disabled = true;
         try {
           await q(sb.rpc("sign_contract", { m: m.id, signature: pad.toDataURL(), tpl }));

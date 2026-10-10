@@ -1,39 +1,45 @@
 /* ============================================================
    BRAND: change the look of the whole app here.
-   Fonts, colors, corner roundness. The name lives in js/brand.js.
+   Fonts, colors, corner roundness. The name and slogan live in js/brand.js.
    ============================================================ */
-@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+/* Small interface text stays in a plain sans-serif so forms and labels read easily. */
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+/* Butler, by Fabian De Smet (www.fabiandesmet.com). Free licence: files unmodified,
+   licence included in fonts/butler/, and a visible link to the designer's site (on the welcome screen). */
+@font-face { font-family: "Butler"; src: url("../fonts/butler/Butler-Free-Rmn.woff2") format("woff2"), url("../fonts/butler/Butler-Free-Rmn.woff") format("woff"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Butler"; src: url("../fonts/butler/Butler-Free-Med.woff2") format("woff2"), url("../fonts/butler/Butler-Free-Med.woff") format("woff"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Butler"; src: url("../fonts/butler/Butler-Free-Bd.woff2") format("woff2"), url("../fonts/butler/Butler-Free-Bd.woff") format("woff"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "Butler"; src: url("../fonts/butler/Butler-Free-XBd.woff2") format("woff2"), url("../fonts/butler/Butler-Free-XBd.woff") format("woff"); font-weight: 800; font-display: swap; }
 
 :root {
-  /* Fonts: display = titles, body = text, mono = small labels and dates */
-  --display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  /* Fonts: display = logo, titles, slogan, prices · body = text and forms · mono = small labels and dates */
+  --display: "Butler", Georgia, "Times New Roman", serif;
   --body: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 
-  /* Light theme colors */
-  --bg: #EEF1F4;        /* page background */
-  --surface: #FFFFFF;   /* cards */
-  --ink: #16233F;       /* main text, dark buttons */
-  --muted: #5C6880;     /* secondary text */
-  --line: #D6DCE5;      /* borders */
-  --red: #D2412E;       /* main accent */
-  --red-soft: #F9E4E0;
-  --blue: #2C57A8;      /* second accent */
-  --blue-soft: #E3EAF7;
-  --ok: #1F8A5B;        /* verified, success */
-  --ok-soft: #DFF2E8;
-  --gold: #9A6A00;      /* stars, hidden gems */
+  /* White and blue */
+  --accent: #002AA7;       /* the brand blue: buttons, links, highlights */
+  --accent-soft: #E6ECF9;
+  --bg: #FAFBFE;           /* page background, almost white */
+  --surface: #FFFFFF;      /* cards */
+  --ink: #0A1A45;          /* main text: a very dark blue */
+  --muted: #5B6888;        /* secondary text */
+  --line: #DCE3F4;         /* borders */
+  --blue: #002AA7;         /* dates, info chips */
+  --blue-soft: #E6ECF9;
+
+  /* Meaning colors, used sparingly */
+  --danger: #C62D2D;       /* errors, "pass" */
+  --danger-soft: #FBE7E7;
+  --red: var(--danger);
+  --red-soft: var(--danger-soft);
+  --ok: #17804F;           /* verified, success */
+  --ok-soft: #E1F3EA;
+  --gold: #9A6A00;         /* stars, hidden gems */
   --gold-soft: #FBF0D2;
 
   --radius: 14px;
-}
-
-/* Dark theme colors (used when the phone or computer is in dark mode) */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0F1524; --surface: #18213A; --ink: #E7ECF5; --muted: #9AA6BF; --line: #2A3654;
-    --red: #F06A55; --red-soft: #3D2226; --blue: #7FA3EE; --blue-soft: #22325A;
-    --ok: #4CC38A; --ok-soft: #173A2C; --gold: #F2B935; --gold-soft: #3A3016;
-    color-scheme: dark;
-  }
+  color-scheme: light;
 }

@@ -4,24 +4,14 @@ import { BRAND } from "../brand.js";
 
 export function renderWelcome() {
   const invited = !!invite.get();
-  view().innerHTML = `<div class="ob">
+  view().innerHTML = `<div class="welcome">
     ${invited ? `<div class="banner"><b>You've been invited to approve a sublet.</b> Create an account as the owner of the flat, or log in, to join the conversation.</div>` : ""}
-    <h1>${esc(BRAND.headline)} <em>${esc(BRAND.headlineAccent)}</em></h1>
-    <p class="lead">${esc(BRAND.pitch)}</p>
-    <div class="ticket" aria-label="Example match">
-      <div><small>LEAVING</small><b>LÉA</b><small>PARIS → MONTRÉAL</small></div><span class="perf"></span>
-      <div><small>ARRIVING</small><b>DIEGO</b><small>BOGOTÁ → PARIS</small></div>
-      <div class="foot">SAME FLAT · 6 JAN → 30 JUN 2027</div>
-    </div>
-    <ol class="how">
-      <li><span><strong>Swipe</strong><span>Students and flats that fit your city and dates.</span></span></li>
-      <li><span><strong>Chat with three</strong><span>The student leaving, the student arriving and the landlord.</span></span></li>
-      <li><span><strong>Sign</strong><span>Pick a sublet contract and sign it in the app.</span></span></li>
-    </ol>
+    <h1 class="slogan">${esc(BRAND.slogan)} <em>${esc(BRAND.sloganAccent)}</em></h1>
     <div class="stack">
       <a class="btn primary full" href="#/auth/signup">Create an account</a>
-      <a class="linkbtn" href="#/auth/login" style="text-align:center">I already have an account</a>
+      <a class="btn full" href="#/auth/login">I already have an account</a>
     </div>
+    <a class="credit" href="${esc(BRAND.fontCredit.url)}" target="_blank" rel="noopener">${esc(BRAND.fontCredit.label)}</a>
   </div>`;
 }
 
