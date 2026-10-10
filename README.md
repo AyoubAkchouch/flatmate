@@ -17,6 +17,7 @@ Built for a hackathon. Contract templates are placeholders, not legal documents.
 | `supabase/schema.sql` | The database: tables, security rules, matching logic |
 | `supabase/seed.sql` | Five demo flats in Paris |
 | `supabase/synthetic-data.sql` | Generates thousands of fake flats and students for testing (numbers adjustable at the top) |
+| `supabase/synthetic-data-paris-100.sql` | Smaller set: 100 fake flats and 100 fake students in the Paris region; replaces earlier fake data |
 | `supabase/synthetic-cleanup.sql` | Deletes all of that fake data, and nothing else |
 | `supabase/update-2-schools-and-invites.sql` | Update for projects created before 10 Oct 2026, 13:00 (already inside schema.sql) |
 
