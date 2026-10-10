@@ -1,14 +1,14 @@
 // Chats: the list of your matches and the 3-person conversation.
-import { sb, state, view, go, esc, q, toast, avatar, fmtShort, fmtDate, copyText } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, avatar, fmtShort, fmtDate, copyText, money } from "../lib.js";
 
-const MATCH_SELECT = `*, listing:listings(id, title, area, city, rent, available_from, available_to, landlord_name, landlord_email),
-  seeker:profiles!matches_seeker_id_fkey(id, full_name),
-  owner:profiles!matches_owner_id_fkey(id, full_name),
-  landlord:profiles!matches_landlord_id_fkey(id, full_name)`;
+const MATCH_SELECT = `*, listing:listings(id, title, area, city, rent, currency, available_from, available_to, landlord_name, landlord_email),
+  seeker:profiles!matches_seeker_id_fkey(id, full_name, avatar_url),
+  owner:profiles!matches_owner_id_fkey(id, full_name, avatar_url),
+  landlord:profiles!matches_landlord_id_fkey(id, full_name, avatar_url)`;
 
 const STATUS_PILL = (m) => m.status === "signed" ? `<span class="pill ok">Signed</span>`
   : m.status === "agreed" ? `<span class="pill red">To sign</span>`
-  : m.landlord_id ? `<span class="pill wait">Landlord in chat</span>` : `<span class="pill gem">Landlord not added</span>`;
+  : m.seeker_agreed_at || m.owner_agreed_at ? `<span class="pill wait">1 of 2 agreed</span>` : `<span class="pill gem">Chatting</span>`;
 
 export async function renderChats() {
   view().innerHTML = `<p class="loading">Loading…</p>`;
@@ -23,7 +23,7 @@ export async function renderChats() {
   last.forEach((m) => { if (!lastBy[m.match_id]) lastBy[m.match_id] = m; });
   view().innerHTML = `<h2 class="section-title">Chats</h2><div class="list">${rows.map((m) => {
     const other = m.seeker_id === me ? m.owner : m.seeker;
-    return `<a class="thread" href="#/chat/${m.id}">${avatar(other?.full_name, other?.id)}
+    return `<a class="thread" href="#/chat/${m.id}">${avatar(other?.full_name, other?.id, "", other?.avatar_url)}
       <span class="t"><strong>${esc(other?.full_name)} · ${esc(m.listing?.area || m.listing?.city || "")}</strong><span>${esc(lastBy[m.id]?.body || "")}</span></span>${STATUS_PILL(m)}</a>`;
   }).join("")}</div>`;
 }
@@ -46,30 +46,42 @@ export async function renderChat(id) {
     return `<div class="msg ${mine ? "me" : ""} ${isLandlord && !mine ? "landlord" : ""}"><span class="who">${esc(who)}</span><span class="b">${esc(x.body)}</span></div>`;
   };
 
+  // Agreeing on terms: each student confirms. Then the lease is filled in with both names.
+  const actions = () => {
+    const l = m.listing || {};
+    if (m.status !== "chatting") return `<a class="btn red" href="#/contract/${m.id}">${m.status === "signed" ? "View the signed lease" : "Read and sign the lease"}</a>`;
+    const first = (p) => esc((p?.full_name || "").split(" ")[0] || "They");
+    const terms = `${money(l.rent, l.currency)} a month, ${fmtShort(l.available_from)} → ${fmtDate(l.available_to)}`;
+    if (myRole === "landlord") return `<span class="agree-note">The two students agree on the terms first (${terms}). You then give your consent by signing the lease.</span>`;
+    const iAgreed = myRole === "seeker" ? m.seeker_agreed_at : m.owner_agreed_at;
+    const other = myRole === "seeker" ? m.owner : m.seeker;
+    const theyAgreed = myRole === "seeker" ? m.owner_agreed_at : m.seeker_agreed_at;
+    return iAgreed
+      ? `<span class="agree-note"><b>You agreed</b> to ${terms}. Waiting for ${first(other)} to agree; the lease opens as soon as they do.</span>`
+      : `<button class="btn red" id="agree">Agree on terms</button>
+         <span class="agree-note">${theyAgreed ? `<b>${first(other)} already agreed.</b> ` : ""}${terms}. Once you both agree, the lease is filled in with your names.</span>`;
+  };
+
   const draw = () => {
     const l = m.listing || {};
     const ll = m.landlord_id
-      ? `<span class="person">${avatar(m.landlord?.full_name, m.landlord_id)}${esc(m.landlord?.full_name)} · landlord</span>`
+      ? `<span class="person">${avatar(m.landlord?.full_name, m.landlord_id, "", m.landlord?.avatar_url)}${esc(m.landlord?.full_name)} · landlord</span>`
       : `<span class="person pending"><span class="avatar" style="background:var(--line);color:var(--ink)">+</span>Landlord not added yet</span>`;
-    const mailBody = encodeURIComponent(`Hello${l.landlord_name ? " " + l.landlord_name : ""},\n\n${m.owner?.full_name} would like to sublet "${l.title}" to ${m.seeker?.full_name} from ${fmtDate(l.available_from)} to ${fmtDate(l.available_to)}, at €${l.rent} per month.\n\nYou can review the request, talk with both of us and approve it here:\n${inviteLink}\n\nThank you.`);
+    const mailBody = encodeURIComponent(`Hello${l.landlord_name ? " " + l.landlord_name : ""},\n\n${m.owner?.full_name} would like to sublet "${l.title}" to ${m.seeker?.full_name} from ${fmtDate(l.available_from)} to ${fmtDate(l.available_to)}, at ${money(l.rent, l.currency)} per month.\n\nYou can review the request, talk with both of us and approve it here:\n${inviteLink}\n\nThank you.`);
     view().innerHTML = `<div class="chat">
       <div class="chat-head"><a class="back" href="#/chats">‹ All chats</a>
-        <div class="row"><strong>${esc(l.title)}</strong><span class="dates">€${l.rent} · ${fmtShort(l.available_from)} → ${fmtShort(l.available_to)}</span></div>
+        <div class="row"><strong>${esc(l.title)}</strong><span class="dates">${money(l.rent, l.currency)} · ${fmtShort(l.available_from)} → ${fmtShort(l.available_to)}</span></div>
         <div class="people">
-          <span class="person">${avatar(m.seeker?.full_name, m.seeker_id)}${myRole === "seeker" ? "You" : esc(m.seeker?.full_name)} · arriving</span>
-          <span class="person">${avatar(m.owner?.full_name, m.owner_id)}${myRole === "owner" ? "You" : esc(m.owner?.full_name)} · tenant</span>${ll}</div></div>
+          <span class="person">${avatar(m.seeker?.full_name, m.seeker_id, "", m.seeker?.avatar_url)}${myRole === "seeker" ? "You" : esc(m.seeker?.full_name)} · arriving</span>
+          <span class="person">${avatar(m.owner?.full_name, m.owner_id, "", m.owner?.avatar_url)}${myRole === "owner" ? "You" : esc(m.owner?.full_name)} · tenant</span>${ll}</div></div>
       <div class="msgs" id="msgs">${msgs.map(msgHTML).join("")}</div>
-      ${!m.landlord_id && myRole !== "landlord" ? `<div class="invite">
-        <strong>Add the landlord to this chat</strong>
-        <span style="color:var(--muted)">Send this link to ${esc(l.landlord_name || "the landlord")}. They create an account and join the conversation.</span>
+      ${!m.landlord_id && myRole !== "landlord" && m.status !== "signed" ? `<div class="invite">
+        <strong>Add the landlord to this chat <span style="font-weight:400;color:var(--muted)">(recommended)</span></strong>
+        <span style="color:var(--muted)">Most leases need the landlord's written consent to sublet. Send this link to ${esc(l.landlord_name || "the landlord")}: they join the conversation and sign the lease to give their consent.</span>
         <code>${esc(inviteLink)}</code>
         <div class="btns"><button class="btn" id="copy">Copy link</button>
           <a class="btn" href="mailto:${esc(l.landlord_email || "")}?subject=${encodeURIComponent("Sublet request for " + (l.title || "your flat"))}&body=${mailBody}">Write an email</a></div></div>` : ""}
-      <div class="chat-actions">
-        ${m.status === "chatting" ? `<button class="btn red" id="agree" ${m.landlord_id ? "" : "disabled"}>Agree on terms</button>
-          ${m.landlord_id ? "" : `<span style="font-size:12px;color:var(--muted);align-self:center">Available once the landlord joins</span>`}`
-          : `<a class="btn red" href="#/contract/${m.id}">${m.status === "signed" ? "View signed contract" : "Open the contract to sign"}</a>`}
-      </div>
+      <div class="chat-actions">${actions()}</div>
       <form class="composer" id="comp"><input id="msgInput" placeholder="Write a message" autocomplete="off" maxlength="2000"><button class="btn primary">Send</button></form>
     </div>`;
     view().scrollTop = view().scrollHeight;
@@ -78,7 +90,12 @@ export async function renderChat(id) {
     const a = document.getElementById("agree");
     if (a) a.onclick = async () => {
       a.disabled = true;
-      try { await q(sb.rpc("agree_terms", { m: m.id })); await reloadMatch(); go("contract/" + m.id); }
+      try {
+        await q(sb.rpc("agree_terms", { m: m.id }));
+        await reloadMatch();
+        if (m.status !== "chatting") go("contract/" + m.id);
+        else toast("Noted. The lease opens when the other student agrees too.");
+      }
       catch { a.disabled = false; }
     };
     document.getElementById("comp").onsubmit = async (e) => {

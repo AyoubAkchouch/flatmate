@@ -13,7 +13,7 @@ import { renderInvite } from "./views/invite.js";
 import { renderPreferences } from "./views/preferences.js";
 
 document.title = BRAND.fullName;
-document.getElementById("brand").innerHTML = `${esc(BRAND.nameStart)}<span>${esc(BRAND.nameEnd)}</span>`;
+document.getElementById("brand").innerHTML = `<img class="brand-mark" src="${BRAND.logo}" alt=""><span class="brand-name">${esc(BRAND.nameStart)}<span>${esc(BRAND.nameEnd)}</span></span>`;
 
 const ROUTES = {
   welcome: renderWelcome,

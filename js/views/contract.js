@@ -1,82 +1,132 @@
-// Contracts: list of agreements to sign, and the signing screen.
-import { sb, state, view, esc, q, toast, avatar, fmtDate, signaturePad, starsHTML } from "../lib.js";
+// Contracts: the list of leases, and the lease itself with its signatures.
+import { sb, state, view, esc, q, toast, avatar, fmtDate, signaturePad, starsHTML, money } from "../lib.js";
 
-// Placeholder templates for the hackathon. Not legal documents.
+// Three versions of the sample lease. Hackathon prototype: not legal documents.
 export const TEMPLATES = {
-  standard: { name: "Furnished sublet", desc: "Whole flat, furnished, for the length of an exchange semester.", clauses: [
-    "The tenant sublets the whole furnished flat to the subtenant for the dates below.",
-    "The rent paid by the subtenant does not exceed the rent paid by the tenant.",
-    "The landlord gives written consent to the sublet and its rent by signing below.",
-    "The tenant stays responsible toward the landlord under the main lease.",
-    "An inventory of the flat is done at move-in and move-out." ] },
-  short: { name: "Short stay (under 3 months)", desc: "For summer schools and short programmes.", clauses: [
-    "The tenant sublets the flat for a short stay on the dates below.",
-    "Rent is paid in full before move-in.",
-    "The landlord gives written consent to the sublet and its rent by signing below.",
-    "Utilities are included in the rent." ] },
-  room: { name: "Room in a shared flat", desc: "One private room, shared kitchen and bathroom.", clauses: [
-    "The tenant sublets one private room and shared access to common areas.",
-    "The subtenant follows the house rules agreed in the chat.",
-    "The landlord gives written consent to the sublet and its rent by signing below.",
-    "Rent includes a fair share of utilities." ] },
+  standard: { name: "Whole flat", desc: "The whole flat, furnished, for an exchange semester." },
+  short: { name: "Short stay (under 3 months)", desc: "Summer schools and short programmes. Rent paid upfront." },
+  room: { name: "Room in a shared flat", desc: "One private room, shared kitchen and bathroom." },
 };
 
-const SELECT = `*, listing:listings(title, area, city, address, rent, available_from, available_to, kind),
-  seeker:profiles!matches_seeker_id_fkey(id, full_name), owner:profiles!matches_owner_id_fkey(id, full_name),
-  landlord:profiles!matches_landlord_id_fkey(id, full_name)`;
+const SELECT = `*, listing:listings(title, area, city, address, rent, currency, available_from, available_to, kind, size_m2, tags, landlord_name),
+  seeker:profiles!matches_seeker_id_fkey(id, full_name, avatar_url, home_university, host_university),
+  owner:profiles!matches_owner_id_fkey(id, full_name, avatar_url, home_university),
+  landlord:profiles!matches_landlord_id_fkey(id, full_name, avatar_url)`;
 
 export async function renderContracts() {
   view().innerHTML = `<p class="loading">Loading…</p>`;
   const rows = await q(sb.from("matches").select(SELECT).in("status", ["agreed", "signed"]).order("created_at", { ascending: false }));
   if (!rows.length) {
-    view().innerHTML = `<div class="empty"><h3>No contracts yet</h3><p>A contract is ready to sign once you, the other student and the landlord agree in a chat.</p><a class="btn primary" href="#/chats">Open Chats</a></div>`;
+    view().innerHTML = `<div class="empty"><h3>No leases yet</h3><p>When you and the other student both agree on the terms in a chat, the lease appears here with your names filled in, ready to sign.</p><a class="btn primary" href="#/chats">Open Chats</a></div>`;
     return;
   }
-  view().innerHTML = `<h2 class="section-title">Contracts</h2><div class="list">${rows.map((m) => `
-    <a class="thread" href="#/contract/${m.id}">${avatar(m.owner?.full_name, m.id)}
-      <span class="t"><strong>${esc(m.listing?.title)}</strong><span>${esc(m.owner?.full_name)} → ${esc(m.seeker?.full_name)} · €${m.listing?.rent}</span></span>
-      ${m.status === "signed" ? `<span class="pill ok">Signed</span>` : `<span class="pill red">To sign</span>`}</a>`).join("")}</div>`;
+  const me = state.profile.id;
+  view().innerHTML = `<h2 class="section-title">Leases</h2><div class="list">${rows.map((m) => {
+    const other = m.seeker_id === me ? m.owner : m.seeker;
+    return `<a class="thread" href="#/contract/${m.id}">${avatar(other?.full_name, other?.id, "", other?.avatar_url)}
+      <span class="t"><strong>${esc(m.listing?.title)}</strong><span>${esc(m.owner?.full_name)} → ${esc(m.seeker?.full_name)} · ${money(m.listing?.rent, m.listing?.currency)}</span></span>
+      ${m.status === "signed" ? `<span class="pill ok">Signed</span>` : `<span class="pill red">To sign</span>`}</a>`;
+  }).join("")}</div>`;
 }
+
+// Roughly how long the stay is, in words.
+function lengthInWords(from, to) {
+  if (!from || !to) return "";
+  const days = Math.round((new Date(to) - new Date(from)) / 86400000);
+  if (days < 0) return "";
+  if (days < 60) return `${Math.round(days / 7)} weeks`;
+  const months = Math.round((days / 30.44) * 2) / 2;
+  return `about ${String(months).replace(".5", "½")} months`;
+}
+const monthsBetween = (from, to) => Math.max(1, Math.round((new Date(to) - new Date(from)) / 86400000 / 30.44));
 
 export async function renderContract(id) {
   view().innerHTML = `<p class="loading">Loading…</p>`;
   const me = state.profile.id;
   let m = await q(sb.from("matches").select(SELECT).eq("id", id).maybeSingle());
-  if (!m) { view().innerHTML = `<div class="empty"><h3>This contract isn't available</h3><a class="btn" href="#/contracts">All contracts</a></div>`; return; }
+  if (!m) { view().innerHTML = `<div class="empty"><h3>This lease isn't available</h3><a class="btn" href="#/contracts">All leases</a></div>`; return; }
   let c = await q(sb.from("contracts").select("*").eq("match_id", id).single());
-  let tpl = c.template;
   let reviews = await q(sb.from("reviews").select("*").eq("match_id", id));
   const myRole = m.seeker_id === me ? "seeker" : m.owner_id === me ? "owner" : "landlord";
+  const nobodySigned = () => !(c.seeker_signature || c.owner_signature || c.landlord_signature);
+  // Before anyone signs, start from the version that fits the flat.
+  const fitting = () => {
+    const l = m.listing || {};
+    if (l.kind === "room") return "room";
+    if (l.available_from && l.available_to && (new Date(l.available_to) - new Date(l.available_from)) / 86400000 < 92) return "short";
+    return "standard";
+  };
+  let tpl = nobodySigned() && c.template === "standard" ? fitting() : c.template;
+  let readOk = false;
+
+  // Not agreed yet: the lease isn't shown until both students agree on the terms.
+  if (m.status === "chatting") {
+    view().innerHTML = `<div class="empty"><h3>The lease opens once you both agree</h3>
+      <p>Talk through the dates, rent and house rules in the chat. When you and the other student both tap <b>Agree on terms</b>, the lease is filled in with your names and details, ready to sign.</p>
+      <a class="btn primary" href="#/chat/${m.id}">Back to the chat</a></div>`;
+    return;
+  }
 
   const draw = () => {
     const l = m.listing || {}, t = TEMPLATES[tpl] || TEMPLATES.standard;
-    const anySigned = c.seeker_signature || c.owner_signature || c.landlord_signature;
-    const all = c.seeker_signature && c.owner_signature && c.landlord_signature;
+    const all = c.seeker_signature && c.owner_signature && (!m.landlord_id || c.landlord_signature);
+    const cur = l.currency || "EUR";
+    const F = (v) => `<span class="fill">${esc(v)}</span>`; // a detail filled in automatically
+    const owner = m.owner?.full_name || "the tenant", seeker = m.seeker?.full_name || "the subtenant";
+    const landlordName = m.landlord?.full_name || l.landlord_name || "";
+    const agreedOn = [m.seeker_agreed_at, m.owner_agreed_at].filter(Boolean).sort().pop() || m.created_at;
+    const place = [l.address || l.area, l.address && l.area ? l.area : null, l.city].filter(Boolean).join(", ");
+    const included = (l.tags || []).filter((x) => x !== "Near public transport" && x !== "Quiet street");
+    const bills = (l.tags || []).includes("Bills included");
+    const short = tpl === "short", room = tpl === "room";
+
+    const clauses = [
+      ["The parties", `This sublease is made on ${F(fmtDate(agreedOn))} between ${F(owner)}${m.owner?.home_university ? `, a student at ${F(m.owner.home_university)}` : ""} (the <b>Tenant</b>), who rents the flat below${landlordName ? ` from ${F(landlordName)} (the <b>Landlord</b>)` : ""}, and ${F(seeker)}${m.seeker?.home_university ? `, a student at ${F(m.seeker.home_university)}` : ""}${m.seeker?.host_university ? ` on exchange at ${F(m.seeker.host_university)}` : ""} (the <b>Subtenant</b>).`],
+      ["The flat", `The Tenant sublets to the Subtenant ${room ? "one private, furnished room, with shared use of the kitchen, bathroom and living areas," : "the whole furnished flat"} at ${F(place)}${l.size_m2 ? ` (${F(l.size_m2 + " m²")}${room ? " for the room" : ""})` : ""}.${included.length ? ` Included: ${F(included.join(", ").toLowerCase())}.` : ""}`],
+      ["Length of the stay", `From ${F(fmtDate(l.available_from))} to ${F(fmtDate(l.available_to))}${lengthInWords(l.available_from, l.available_to) ? ` (${lengthInWords(l.available_from, l.available_to)})` : ""}. The Subtenant hands back the keys by noon on the last day. The sublease ends on that date without further notice.`],
+      ["Rent", short
+        ? `The rent is ${F(money(l.rent, cur) + " per month")}, ${F(money(l.rent * monthsBetween(l.available_from, l.available_to), cur))} for the whole stay, paid in full to the Tenant before move-in.`
+        : `The rent is ${F(money(l.rent, cur) + " per month")}, paid to the Tenant by the 1st of each month. It is not more than the rent the Tenant pays on their own lease.`],
+      ["Security deposit", `The Subtenant pays a deposit of ${F(money(l.rent, cur))} (one month's rent) before move-in. The Tenant returns it within 30 days of move-out, minus the cost of any damage beyond normal wear, with receipts.`],
+      ["Bills", bills ? "Electricity, heating, water and internet are included in the rent." : room ? "The Subtenant pays a fair share of electricity, heating, water and internet, split with the other flatmates as agreed in the chat." : "The Subtenant pays the electricity, heating and internet used during the stay, as agreed in the chat."],
+      ["Using the flat", `The Subtenant lives in the flat personally, doesn't sublet it to anyone else, respects the building's rules and neighbours, and keeps it clean.${room ? " House rules agreed in the chat with the other flatmates apply." : ""}`],
+      ["The main lease", "The Tenant remains responsible toward the Landlord under the main lease. The Subtenant agrees to respect the parts of the main lease that apply to how the flat is used."],
+      ["Landlord's consent", m.landlord_id
+        ? `${F(m.landlord?.full_name || "The Landlord")} gives written consent to this sublease and its rent by signing below.`
+        : `The Tenant confirms they have the Landlord's written permission to sublet${landlordName ? ` (${F(landlordName)})` : ""}, where their lease requires it. The Landlord can also join the chat and sign below.`],
+      ["Check-in and check-out", "The Tenant and Subtenant go through the flat together on arrival and departure, and share photos of its condition in the chat."],
+      ["Ending early", short ? "The stay can only end early if both students agree in writing. Rent already paid for nights not used is refunded only if the Tenant finds someone else." : "Either student can end the sublease early with 30 days' written notice in the chat. Rent is due until the end of the notice period."],
+      ["Signing electronically", "Each party signs from their own verified Flatmate account. The drawn signature, the signer's name and the time are recorded with this lease and have the same value as a signature on paper."],
+    ];
+
     const sigRow = (role, label, person) => {
       const sig = c[role + "_signature"], at = c[role + "_signed_at"];
       const mine = role === myRole;
-      return `<div class="sig"><div class="row"><strong>${esc(label)}${mine ? " · you" : ""}</strong>
-          ${sig ? `<span class="pill ok">Signed ${fmtDate(at)}</span>` : `<span class="pill wait">Waiting</span>`}</div>
-        ${sig ? `<img alt="Signature of ${esc(person?.full_name)}" src="${sig}">`
-          : mine && m.status !== "chatting" ? `<canvas class="pad" id="pad" aria-label="Draw your signature here"></canvas>
-            <div class="btns"><button class="btn" id="clear">Clear</button><button class="btn primary" id="sign">Sign as ${esc(person?.full_name || "you")}</button></div>`
-          : `<span style="font-size:13px;color:var(--muted)">${person ? `${esc(person.full_name)} signs from their own account.` : "The landlord hasn't joined yet."}</span>`}</div>`;
+      return `<div class="sig"><div class="row"><strong>${esc(label)} · ${esc(person?.full_name || "")}${mine ? " (you)" : ""}</strong>
+          ${sig ? `<span class="pill ok">Signed</span>` : `<span class="pill wait">Waiting</span>`}</div>
+        ${sig ? `<img alt="Signature of ${esc(person?.full_name)}" src="${sig}"><span class="sigmeta">Signed electronically by ${esc(person?.full_name)} on ${new Date(at).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>`
+          : mine ? `<label class="readok"><input type="checkbox" id="readok" ${readOk ? "checked" : ""}> I've read the whole lease above and I agree to sign it electronically.</label>
+            <canvas class="pad" id="pad" aria-label="Draw your signature here"></canvas>
+            <div class="btns"><button class="btn" id="clear">Clear</button><button class="btn primary" id="sign" ${readOk ? "" : "disabled"}>Sign as ${esc(person?.full_name || "you")}</button></div>
+            <small class="sigmeta">Draw your signature with your finger or mouse.</small>`
+          : `<span class="sigmeta">${esc(person?.full_name || "They")} signs from their own account.</span>`}</div>`;
     };
+
     view().innerHTML = `<div>
       <a class="back no-print" href="#/chat/${m.id}">‹ Back to the chat</a>
-      <h2 class="section-title" style="margin-top:10px">Sublet contract</h2>
-      <p class="note no-print">Hackathon prototype: these templates are placeholders, not legal documents.</p>
-      ${anySigned ? "" : `<div class="templates" role="radiogroup" aria-label="Contract template">${Object.entries(TEMPLATES).map(([k, v]) =>
-        `<label class="tpl"><input type="radio" name="tpl" value="${k}" ${k === tpl ? "checked" : ""}><span><strong>${v.name}</strong><span>${v.desc}</span></span></label>`).join("")}</div>`}
-      <div class="doc"><h3>${t.name} agreement</h3><div class="ref">REF ${m.id.slice(0, 8).toUpperCase()} · ${esc((l.city || "").toUpperCase())}</div>
-        <dl><dt>Tenant</dt><dd>${esc(m.owner?.full_name)}</dd><dt>Subtenant</dt><dd>${esc(m.seeker?.full_name)}</dd>
-          <dt>Landlord</dt><dd>${esc(m.landlord?.full_name || "Not joined yet")}</dd>
-          <dt>Address</dt><dd>${esc(l.address || l.area || "")}${l.city ? ", " + esc(l.city) : ""}</dd>
-          <dt>Dates</dt><dd>${fmtDate(l.available_from)} → ${fmtDate(l.available_to)}</dd><dt>Rent</dt><dd>€${l.rent} / month</dd></dl>
-        <ol>${t.clauses.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>
-        ${all ? `<span class="done">FULLY SIGNED</span>` : ""}</div>
-      <div class="sigs">${sigRow("owner", "Tenant", m.owner)}${sigRow("seeker", "Subtenant", m.seeker)}${sigRow("landlord", "Landlord consent", m.landlord)}</div>
-      ${all ? `<button class="btn primary full no-print" id="print" style="margin-top:14px">Save as PDF or print</button>` : ""}
+      <h2 class="section-title" style="margin-top:10px">Sublease agreement</h2>
+      <p class="note no-print">A sample lease for this prototype, not legal advice. The <span class="fill">highlighted</span> details were filled in from your profiles and the listing.</p>
+      ${nobodySigned() ? `<div class="templates no-print" role="radiogroup" aria-label="Type of lease">${Object.entries(TEMPLATES).map(([k, v]) =>
+        `<label class="tpl"><input type="radio" name="tpl" value="${k}" ${k === tpl ? "checked" : ""}><span><strong>${v.name}</strong><span>${v.desc}</span></span></label>`).join("")}</div>` : ""}
+      <article class="doc lease">
+        <h3>Sublease agreement</h3><div class="ref">${esc(t.name.toUpperCase())} · REF ${m.id.slice(0, 8).toUpperCase()} · ${esc((l.city || "").toUpperCase())}</div>
+        <ol>${clauses.map(([h, b]) => `<li><b>${esc(h)}.</b> ${b}</li>`).join("")}</ol>
+        ${all ? `<span class="done">FULLY SIGNED</span>` : ""}
+      </article>
+      <h3 class="section-title" style="font-size:20px">Signatures</h3>
+      <div class="sigs">${sigRow("owner", "Tenant", m.owner)}${sigRow("seeker", "Subtenant", m.seeker)}${m.landlord_id ? sigRow("landlord", "Landlord's consent", m.landlord) : ""}</div>
+      ${all ? `<button class="btn primary full no-print" id="print" style="margin-top:14px">Save as PDF or print</button>`
+        : `<p class="note no-print" style="margin-top:12px">${m.landlord_id ? "The lease is complete when the tenant, the subtenant and the landlord have signed." : "The lease is complete when both students have signed."}</p>`}
       ${m.status === "signed" && myRole !== "landlord" ? reviewBox() : ""}
     </div>`;
 
@@ -84,15 +134,17 @@ export async function renderContract(id) {
     const canvas = document.getElementById("pad");
     if (canvas) {
       const pad = signaturePad(canvas);
+      const signBtn = document.getElementById("sign");
+      document.getElementById("readok").onchange = (e) => { readOk = e.target.checked; signBtn.disabled = !readOk; };
       document.getElementById("clear").onclick = () => pad.clear();
-      document.getElementById("sign").onclick = async (e) => {
+      signBtn.onclick = async () => {
         if (pad.isEmpty()) { canvas.style.borderColor = "var(--danger)"; toast("Draw your signature in the box first.", "err"); return; }
-        e.target.disabled = true;
+        signBtn.disabled = true;
         try {
           await q(sb.rpc("sign_contract", { m: m.id, signature: pad.toDataURL(), tpl }));
-          toast("Signed.");
+          toast("Signed. Thank you.");
           await reload();
-        } catch { e.target.disabled = false; }
+        } catch { signBtn.disabled = false; }
       };
     }
     const pr = document.getElementById("print");
@@ -142,7 +194,7 @@ export async function renderContract(id) {
   const reload = async () => {
     m = await q(sb.from("matches").select(SELECT).eq("id", id).single());
     c = await q(sb.from("contracts").select("*").eq("match_id", id).single());
-    tpl = c.template;
+    if (!nobodySigned()) tpl = c.template;
     draw();
   };
 

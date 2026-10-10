@@ -1,5 +1,5 @@
 // A landlord opened an invitation link. Show what it is about and who is signed in, then let them confirm.
-import { sb, state, view, go, esc, q, toast, invite, avatar } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, invite, avatar, money } from "../lib.js";
 
 export async function renderInvite() {
   const token = invite.get();
@@ -18,11 +18,11 @@ export async function renderInvite() {
     <span class="eyebrow">Invitation</span>
     <h2>Approve a sublet of ${esc(inv.title)}</h2>
     <div class="listing">
-      <div class="row"><strong>${esc(inv.area || inv.city || "")}</strong><span class="price">€${inv.rent}<small> / month</small></span></div>
+      <div class="row"><strong>${esc(inv.area || inv.city || "")}</strong><span class="price">${money(inv.rent, inv.currency)}<small> / month</small></span></div>
       <div class="stats"><span>Tenant <b>${esc(inv.owner_name)}</b></span><span>Wants to sublet to <b>${esc(inv.seeker_name)}</b></span></div>
       ${inv.expected_email ? `<small style="color:var(--muted)">The tenant sent this to ${esc(inv.expected_email)}. Only that account can join.</small>` : ""}
     </div>
-    <div class="idcard">${avatar(p.full_name, p.id)}<span>You're logged in as <b>${esc(p.full_name)}</b><br>
+    <div class="idcard">${avatar(p.full_name, p.id, "", p.avatar_url)}<span>You're logged in as <b>${esc(p.full_name)}</b><br>
       <span style="color:var(--muted);font-size:13px">${esc(p.email)} · ${isLandlord ? "landlord account" : "student account"}</span></span></div>
     ${inv.landlord_taken ? `<p class="banner">A landlord has already joined this chat. If that's you, open it from your sublet requests.</p>`
       : isLandlord ? "" : `<p class="banner">This invitation is for the landlord of the flat, and you're logged in with a student account. Log out, then sign in or create an account as the landlord.</p>`}

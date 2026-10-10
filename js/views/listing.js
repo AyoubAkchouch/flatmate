@@ -1,5 +1,5 @@
 // Add or edit a flat to sublet. #/list = new flat, #/list/<id> = edit.
-import { sb, state, view, go, esc, q, toast, loadProfile, FEATURES, ICON, geocode, photoUrl, storageSafeName } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, loadProfile, FEATURES, ICON, geocode, photoUrl, storageSafeName, money, CURRENCIES, currencyForCountry } from "../lib.js";
 import { searchAddresses, autocomplete } from "../schools.js";
 
 const TAGS = FEATURES;
@@ -12,6 +12,8 @@ export async function renderListingForm(id) {
     if (l.owner_id !== p.id) return go("profile");
   }
   let kind = l?.kind || "whole";
+  let currency = l?.currency || "EUR";
+  let currencyTouched = !!l; // once chosen by hand, the address no longer changes it
   let newFiles = [];
   let keptPhotos = l?.photos ? [...l.photos] : [];
   const val = (k, fallback = "") => esc(l ? l[k] ?? "" : fallback);
@@ -37,9 +39,10 @@ export async function renderListingForm(id) {
       <div class="two"><label class="field"><span>Free from ${l ? "" : `<span class="auto">Your exchange</span>`}</span><input id="l-from" type="date" value="${val("available_from", p.exchange_from || "")}"></label>
         <label class="field"><span>Until</span><input id="l-to" type="date" value="${val("available_to", p.exchange_to || "")}"></label></div>
       <div class="two"><label class="field"><span>Size (m²)</span><input id="l-size" type="number" min="5" inputmode="numeric" value="${val("size_m2")}" placeholder="20"></label>
-        <label class="field"><span>Rent you ask (€/month)</span><input id="l-rent" type="number" min="1" inputmode="numeric" value="${val("rent")}" placeholder="650"></label></div>
-      <label class="field"><span>Rent on your own lease (€/month)</span><input id="l-lease" type="number" min="1" inputmode="numeric" value="${val("lease_rent")}" placeholder="700">
-        <small>A sublet can't cost more than the rent you pay, so price suggestions never go above this.</small></label>
+        <label class="field"><span>Currency</span><select id="l-cur">${Object.entries(CURRENCIES).map(([k, v]) => `<option value="${k}" ${k === currency ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label></div>
+      <div class="two"><label class="field"><span>Rent you ask (<span class="cur">${esc(currency)}</span>/month)</span><input id="l-rent" type="number" min="1" inputmode="numeric" value="${val("rent")}" placeholder="650"></label>
+      <label class="field"><span>Rent on your own lease (<span class="cur">${esc(currency)}</span>/month)</span><input id="l-lease" type="number" min="1" inputmode="numeric" value="${val("lease_rent")}" placeholder="700"></label></div>
+      <small style="color:var(--muted);font-size:12px;margin-top:-8px">A sublet can't cost more than the rent you pay on your lease, so price suggestions never go above it.</small>
       <div class="field"><span>What's included</span><div class="checkchips">${TAGS.map((t, i) =>
         `<label><input type="checkbox" id="l-tag${i}" value="${esc(t)}" ${l?.tags?.includes(t) ? "checked" : ""}>${esc(t)}</label>`).join("")}</div></div>
       <div class="two"><label class="field"><span>Landlord's name</span><input id="l-llname" value="${val("landlord_name")}" placeholder="e.g. M. Dubois"></label>
@@ -72,9 +75,16 @@ export async function renderListingForm(id) {
     go("profile");
   };
   if (!l) $("l-title").focus();
+  const setCurrency = (c) => {
+    currency = c;
+    $("l-cur").value = c;
+    view().querySelectorAll(".cur").forEach((x) => (x.textContent = c));
+  };
+  $("l-cur").onchange = () => { currencyTouched = true; setCurrency($("l-cur").value); };
   autocomplete($("l-address"), searchAddresses, (it) => {
     pinned = it;
     if (!it) return;
+    if (!currencyTouched && it.country) setCurrency(currencyForCountry(it.country));
     const ctx = (it.detail || "").split(",");
     if (!$("l-city").value.trim()) $("l-city").value = it.name.replace(/^.*\d{5}\s*/, "") || ctx[0] || "";
   });
@@ -87,11 +97,11 @@ export async function renderListingForm(id) {
       area: $("l-area").value.trim(), available_from: $("l-from").value || null,
       available_to: $("l-to").value || null, size_m2: +$("l-size").value, rent: +$("l-rent").value, lease_rent: +$("l-lease").value,
       tags: TAGS.filter((_, i) => $("l-tag" + i).checked), landlord_name: $("l-llname").value.trim() || null,
-      landlord_email: $("l-ll").value.trim() || null,
+      landlord_email: $("l-ll").value.trim() || null, currency,
     };
     if (!data.title || !data.city || !data.size_m2 || !data.rent || !data.lease_rent) return err("Add a title, the city, the size and both rents to publish.");
     if (data.available_from && data.available_to && data.available_to <= data.available_from) return err("The end date needs to be after the start date.");
-    if (data.rent > data.lease_rent) return err(`You ask €${data.rent} but pay €${data.lease_rent} on your lease. A sublet can't cost more than your own rent, so lower the price to €${data.lease_rent} or less.`);
+    if (data.rent > data.lease_rent) return err(`You ask ${money(data.rent, currency)} but pay ${money(data.lease_rent, currency)} on your lease. A sublet can't cost more than your own rent, so lower the price to ${money(data.lease_rent, currency)} or less.`);
 
     const btn = $("lsave"); btn.disabled = true; btn.textContent = "Finding the address…";
     try {

@@ -9,7 +9,7 @@ export async function renderAdmin() {
   view().innerHTML = `<p class="loading">Loading…</p>`;
   const [settings, rows] = await Promise.all([
     q(sb.from("app_settings").select("*").eq("id", 1).single()),
-    q(sb.from("verifications").select("*, user:profiles!verifications_user_id_fkey(full_name, email, home_university)").order("created_at", { ascending: false }).limit(100)),
+    q(sb.from("verifications").select("*, user:profiles!verifications_user_id_fkey(full_name, email, home_university, avatar_url)").order("created_at", { ascending: false }).limit(100)),
   ]);
   const pending = rows.filter((r) => r.status === "pending");
   const recent = rows.filter((r) => r.status !== "pending").slice(0, 20);
@@ -40,7 +40,7 @@ export async function renderAdmin() {
     </div>
     <section class="psec"><h3>Waiting for review (${pending.length})</h3>
       ${pending.length ? pending.map((r) => `<div class="review">
-        <div class="host">${avatar(r.user?.full_name, r.user_id)}<span><b>${esc(r.user?.full_name)}</b> · ${esc(r.user?.email)}<br>${kindLabel(r.kind)}${r.document_type ? ` · ${esc(r.document_type.replace("_", " "))}` : ""} · ${fmtDate(r.created_at)}</span></div>
+        <div class="host">${avatar(r.user?.full_name, r.user_id, "", r.user?.avatar_url)}<span><b>${esc(r.user?.full_name)}</b> · ${esc(r.user?.email)}<br>${kindLabel(r.kind)}${r.document_type ? ` · ${esc(r.document_type.replace("_", " "))}` : ""} · ${fmtDate(r.created_at)}</span></div>
         <div class="thumbs">${r.files.map((f) => links[f]
           ? (/\.pdf$/i.test(f) ? `<a class="btn" href="${esc(links[f])}" target="_blank" rel="noopener">Open PDF</a>` : `<a href="${esc(links[f])}" target="_blank" rel="noopener"><img src="${esc(links[f])}" alt="Uploaded document"></a>`)
           : `<span class="pill red">File missing</span>`).join("")}</div>

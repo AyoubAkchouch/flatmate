@@ -6,6 +6,8 @@ export const BRAND = {
   nameStart: "flat",
   nameEnd: "mate",
   fullName: "Flatmate",
+  // The emblem (house and stag), cut out of the logo in brand blue on a transparent background.
+  logo: "img/logo-mark.png",
   // Welcome screen slogan: the second part is shown in the brand blue.
   slogan: "Every home needs a perfect keeper.",
   sloganAccent: "Find yours.",

@@ -1,5 +1,5 @@
 // Discover: seekers swipe flats, subletters swipe the students who liked their flat, landlords see their requests.
-import { sb, state, view, go, esc, q, toast, ICON, avatar, photoUrl, floorPlan, demandFor, starsHTML, fmtShort, fmtDate } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, ICON, avatar, photoUrl, floorPlan, demandFor, starsHTML, fmtShort, fmtDate, money } from "../lib.js";
 
 const loading = `<p class="loading">Loading…</p>`;
 
@@ -109,14 +109,14 @@ function whyLine(l, p) {
   const bits = [];
   if (l.minutes != null) bits.push(`<b>${l.minutes} min</b> to ${esc(p.host_university || "your school")}`);
   bits.push(l.overlap_pct >= 95 ? "<b>covers your whole stay</b>" : `covers <b>${l.overlap_pct}%</b> of your stay`);
-  if (l.budget_max) bits.push(l.rent <= l.budget_max ? `<b>€${l.budget_max - l.rent}</b> under budget` : `<b>€${l.rent - l.budget_max}</b> over budget`);
+  if (l.budget_max) bits.push(l.rent <= l.budget_max ? `<b>${money(l.budget_max - l.rent, l.currency)}</b> under budget` : `<b>${money(l.rent - l.budget_max, l.currency)}</b> over budget`);
   return bits.join(" · ");
 }
 function outsideLabel(l, p) {
   if (l.tier === 1) return "";
   const why = [];
   if (l.minutes != null && l.minutes > (p.max_commute || 45)) why.push(`${l.minutes} min away`);
-  if (l.budget_max && l.rent > l.budget_max * 1.05) why.push(`€${l.rent - l.budget_max} over budget`);
+  if (l.budget_max && l.rent > l.budget_max * 1.05) why.push(`${money(l.rent - l.budget_max, l.currency)} over budget`);
   if (!l.kind_ok) why.push(l.kind === "room" ? "a room, not a whole flat" : "a whole flat, not a room");
   if (l.missing && l.missing.length) why.push(`no ${l.missing.map((m) => m.toLowerCase()).join(", ")}`);
   if (l.overlap_pct < 60) why.push(`free for ${l.overlap_pct}% of your stay`);
@@ -139,7 +139,7 @@ async function seekerDeck() {
   view().innerHTML = (needsPrefs ? `<a class="banner" href="#/preferences" style="display:block;margin-bottom:12px;text-decoration:none">
       <b>Set your budget and wishes</b> to get flats ranked for you. →</a>` : "")
     + deckShell(
-      `<span class="chip">Near <b>${esc(p.host_university || p.city || "you")}</b></span>${p.budget_max ? `<span class="chip">Up to <b>€${p.budget_max}</b></span>` : ""}
+      `<span class="chip">Near <b>${esc(p.host_university || p.city || "you")}</b></span>${p.budget_max ? `<span class="chip">Up to <b>${money(p.budget_max, items[0]?.currency)}</b></span>` : ""}
        <a class="chip" href="#/preferences" style="text-decoration:none">Preferences ›</a>`,
       "Best matches first. Drag right if you're interested, left to pass.");
 
@@ -159,10 +159,10 @@ async function seekerDeck() {
             : d.level === "low" ? `<span class="dpill gem">${ICON.gem}Hidden gem</span>` : ""}
           <span class="stamp like">YES</span><span class="stamp nope">PASS</span></div>
         <div class="info">${outsideLabel(l, p)}<h2>${esc(l.title)}</h2>
-          <div class="row"><span class="price">€${l.rent.toLocaleString("en")}<small> / month</small></span>
+          <div class="row"><span class="price">${money(l.rent, l.currency)}<small> / month</small></span>
             <span class="dates">${fmtShort(l.available_from)} → ${fmtDate(l.available_to)}</span></div>
           <div class="why">${whyLine(l, p)}</div>
-          <div class="host">${avatar(l.owner_name, l.owner_id)}<span><b>${esc(l.owner_name || "Student")}</b>${l.owner_verified ? ` · <span style="color:var(--ok)">verified</span>` : ""}</span>
+          <div class="host">${avatar(l.owner_name, l.owner_id, "", l.owner_avatar)}<span><b>${esc(l.owner_name || "Student")}</b>${l.owner_verified ? ` · <span style="color:var(--ok)">verified</span>` : ""}</span>
             ${starsHTML(l.flat_rating, l.flat_reviews)}</div>
           <div class="tags">${(l.kind === "room" ? ["Room"] : ["Whole flat"]).concat(l.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div></div>`;
     },
@@ -186,7 +186,7 @@ async function seekerDeck() {
         if (!liked) return;
         const m = await findMatch(l.id, p.id);
         const first = (l.owner_name || "The student").split(" ")[0];
-        if (m) showMatch(m.id, `${first} wants to sublet to you`, `${l.title}. A chat is open with ${first}. Add the landlord when you're ready to agree.`);
+        if (m) showMatch(m.id, `${first} wants to sublet to you`, `${l.title}. A chat is open with ${first}. When you both agree on the terms, the lease is filled in for you.`);
         else toast(`Sent. You'll match if ${first} says yes too.`);
       } catch { /* shown */ }
     },
@@ -220,8 +220,8 @@ async function ownerDeck() {
       why.push(a.cover_pct >= 95 ? "<b>uses your whole free period</b>" : `uses <b>${a.cover_pct}%</b> of your free period`);
       if (a.minutes != null) why.push(`<b>${a.minutes} min</b> from your flat to their school`);
       if (a.wanted_n) why.push(`<b>${a.lifestyle_hits}/${a.wanted_n}</b> of your ideal-tenant wishes`);
-      if (a.budget_max) why.push(a.budget_max >= a.rent ? "budget covers your rent" : `budget €${a.rent - a.budget_max} below your rent`);
-      return `<div class="person-card">${avatar(a.full_name, a.seeker_id)}
+      if (a.budget_max) why.push(a.budget_max >= a.rent ? "budget covers your rent" : `budget ${money(a.rent - a.budget_max, a.currency)} below your rent`);
+      return `<div class="person-card">${avatar(a.full_name, a.seeker_id, "", a.avatar_url)}
           <span class="mscore" style="right:10px">${a.score}<small>% MATCH</small></span>
           <h2>${esc(a.full_name || "Student")}</h2>
           <div class="checks" style="justify-content:center">${a.id_status === "verified" ? `<span class="pill ok">ID verified</span>` : `<span class="pill wait">ID ${esc(a.id_status)}</span>`}
@@ -242,7 +242,7 @@ async function ownerDeck() {
         if (!liked) return;
         const m = await findMatch(a.listing_id, a.seeker_id);
         const first = (a.full_name || "The student").split(" ")[0];
-        if (m) showMatch(m.id, `You and ${first} matched`, `A chat is open with ${first}. Add your landlord when you're ready to agree on terms.`);
+        if (m) showMatch(m.id, `You and ${first} matched`, `A chat is open with ${first}. When you both agree on the terms, the lease is filled in for you.`);
       } catch { /* shown */ }
     },
     empty: () => `<div class="empty"><h3>No new requests right now</h3>
@@ -255,7 +255,7 @@ async function ownerDeck() {
 async function landlordHome() {
   const p = state.profile;
   const rows = await q(sb.from("matches")
-    .select("id, status, listing:listings(title, area, city, rent), seeker:profiles!matches_seeker_id_fkey(full_name), owner:profiles!matches_owner_id_fkey(full_name)")
+    .select("id, status, listing:listings(title, area, city, rent, currency), seeker:profiles!matches_seeker_id_fkey(full_name), owner:profiles!matches_owner_id_fkey(id, full_name, avatar_url)")
     .eq("landlord_id", p.id).order("created_at", { ascending: false }));
   if (!rows.length) {
     view().innerHTML = `<div class="empty"><span class="eyebrow">Landlord home</span><h3>No sublet requests yet</h3>
@@ -264,6 +264,6 @@ async function landlordHome() {
   }
   const pill = { chatting: `<span class="pill wait">To discuss</span>`, agreed: `<span class="pill red">To sign</span>`, signed: `<span class="pill ok">Signed</span>` };
   view().innerHTML = `<h2 class="section-title">Sublet requests</h2><div class="list">${rows.map((m) => `
-    <a class="thread" href="#/chat/${m.id}">${avatar(m.owner?.full_name, m.id)}<span class="t"><strong>${esc(m.listing?.title)}</strong>
-      <span>${esc(m.owner?.full_name)} → ${esc(m.seeker?.full_name)} · €${m.listing?.rent}</span></span>${pill[m.status]}</a>`).join("")}</div>`;
+    <a class="thread" href="#/chat/${m.id}">${avatar(m.owner?.full_name, m.owner?.id, "", m.owner?.avatar_url)}<span class="t"><strong>${esc(m.listing?.title)}</strong>
+      <span>${esc(m.owner?.full_name)} → ${esc(m.seeker?.full_name)} · ${money(m.listing?.rent, m.listing?.currency)}</span></span>${pill[m.status]}</a>`).join("")}</div>`;
 }

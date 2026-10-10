@@ -1,5 +1,5 @@
 // Profile: your details, your flats with the demand calculator, your starred flats.
-import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, demandData, priceSuggestion, starsHTML, fmtDate, fmtShort, loadProfile, photoUrl } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, demandData, priceSuggestion, starsHTML, fmtDate, fmtShort, loadProfile, photoUrl, money, storageSafeName } from "../lib.js";
 import { ROLE_LABEL } from "./onboarding.js";
 import { schoolsNear } from "../schools.js";
 
@@ -37,15 +37,15 @@ export async function renderProfile() {
     const label = { high: "High demand", low: "Low demand", normal: "Normal demand" }[d.level];
     const pos = Math.min(98, Math.max(2, (d.ratio / 2) * 100));
     return `<article class="listing">
-      <div class="row"><strong>${esc(l.title)}</strong><span class="price">€${l.rent}<small> / month</small></span></div>
+      <div class="row"><strong>${esc(l.title)}</strong><span class="price">${money(l.rent, l.currency)}<small> / month</small></span></div>
       ${starsHTML(...flatRating(l.id))}
       <div class="stats"><span>${esc(l.area ? l.area + ", " : "")}${esc(l.city)}</span><span>${l.size_m2} m²</span><span>${fmtShort(l.available_from)} → ${fmtDate(l.available_to)}</span>
         ${l.active ? "" : `<span class="pill red">Paused</span>`}</div>
       ${l.active ? `
-      <div class="stats"><span><b>${d.views}</b> views</span><span><b>${d.interested}</b> interested this week</span><span>Similar flats <b>€${d.similarRent}</b></span></div>
+      <div class="stats"><span><b>${d.views}</b> views</span><span><b>${d.interested}</b> interested this week</span><span>Similar flats <b>${money(d.similarRent, l.currency)}</b></span></div>
       <div><div class="gauge" role="img" aria-label="${label}"><i style="left:${pos}%"></i></div><div class="gauge-l"><span>LOW</span><span>NORMAL</span><span>HIGH</span></div></div>
       <div class="suggest"><span><b>${label}.</b> ${s.text}</span>
-        ${s.price ? `<button class="btn primary" data-apply="${l.id}" data-p="${s.price}">Change price to €${s.price}</button>` : ""}</div>
+        ${s.price ? `<button class="btn primary" data-apply="${l.id}" data-p="${s.price}" data-cur="${esc(l.currency)}">Change price to ${money(s.price, l.currency)}</button>` : ""}</div>
       <small style="font-size:12px;color:var(--muted)">${d.basis === "interest"
         ? `Based on views, yeses and stars this week, compared with ${d.peers} flats in ${esc(l.city)}.`
         : `Not enough activity yet in ${esc(l.city)}, so this compares your price per m² with ${d.peers > 1 ? `${d.peers} flats` : "similar flats"} there.`}</small>` : ""}
@@ -58,13 +58,18 @@ export async function renderProfile() {
   const starRow = (r) => {
     const l = r.listing, d = demandFor(l, dd.stat[l.id], dd.benchFor(l)), tr = travelTo(l, hostPlace(p));
     return `<div class="srow">${l.photos?.[0] ? `<img src="${esc(photoUrl(l.photos[0]))}" alt="" style="width:44px;height:44px;border-radius:8px;object-fit:cover">` : ""}
-      <span class="t"><strong>${esc(l.title)}</strong>${starsHTML(...flatRating(l.id))}<span style="display:block">€${l.rent}${tr ? ` · ${tr.minutes} min to ${esc(tr.uni)}` : ""}${l.active ? "" : " · no longer listed"}</span></span>
+      <span class="t"><strong>${esc(l.title)}</strong>${starsHTML(...flatRating(l.id))}<span style="display:block">${money(l.rent, l.currency)}${tr ? ` · ${tr.minutes} min to ${esc(tr.uni)}` : ""}${l.active ? "" : " · no longer listed"}</span></span>
       ${d.level === "high" ? `<span class="pill red">High demand</span>` : d.level === "low" ? `<span class="pill gem">Hidden gem</span>` : ""}
       <button class="star on" data-unstar="${l.id}" aria-label="Remove star">${ICON.star}</button></div>`;
   };
 
   view().innerHTML = `<div>
-    <div class="idcard">${avatar(p.full_name, p.id)}
+    <div class="idcard"><div class="avatar-edit">
+        <label class="avatar-btn" for="avatar-file" title="${p.avatar_url ? "Change your photo" : "Add a profile photo"}">${avatar(p.full_name, p.id, "", p.avatar_url)}
+          <span class="avatar-badge" aria-hidden="true">${ICON.photo}</span></label>
+        <input type="file" id="avatar-file" accept="image/*" hidden>
+        <span class="avatar-actions"><label class="linkbtn" for="avatar-file">${p.avatar_url ? "Change photo" : "Add photo"}</label>
+          ${p.avatar_url ? `<button type="button" class="linkbtn" id="avatar-rm">Remove</button>` : ""}</span></div>
       <span><b>${esc(p.full_name)}</b><br><span style="color:var(--muted);font-size:13px">${dual ? "Looking for a flat · subletting their own" : ROLE_LABEL[p.role] || ""}</span>
       <span class="checks">${STATUS[p.id_status]("ID")}${STATUS[p.student_status]("Student")}</span></span></div>
     <dl class="pdl">
@@ -97,7 +102,7 @@ export async function renderProfile() {
     b.disabled = true;
     try {
       await q(sb.from("listings").update({ rent: +b.dataset.p }).eq("id", b.dataset.apply));
-      toast(`Price updated to €${b.dataset.p}.`);
+      toast(`Price updated to ${money(b.dataset.p, b.dataset.cur)}.`);
       renderProfile();
     } catch { b.disabled = false; }
   }));
@@ -127,6 +132,28 @@ export async function renderProfile() {
     toast(b.dataset.view === "provider" ? "Switched to subletting your flat." : "Switched to looking for a flat.");
     renderProfile();
   }));
+  // Profile photo: shrunk in the browser to a small square before upload, so it loads fast everywhere.
+  document.getElementById("avatar-file").onchange = async (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!/^image\//.test(f.type)) return toast("Choose a photo (JPG, PNG or HEIC).", "err");
+    try {
+      toast("Uploading your photo…");
+      const blob = await squareImage(f, 480);
+      const path = `${p.id}/avatar-${storageSafeName({ name: "a.jpg" })}`;
+      await q(sb.storage.from("listing-photos").upload(path, blob, { contentType: "image/jpeg" }));
+      await q(sb.from("profiles").update({ avatar_url: path }).eq("id", p.id));
+      toast("Photo updated. Other students see it on your cards and in chats.");
+      renderProfile();
+    } catch { /* shown */ }
+  };
+  const rm = document.getElementById("avatar-rm");
+  if (rm) rm.onclick = async () => {
+    await q(sb.from("profiles").update({ avatar_url: null }).eq("id", p.id));
+    toast("Photo removed.");
+    renderProfile();
+  };
   document.getElementById("logout").onclick = async () => { await sb.auth.signOut(); go("welcome"); };
 }
 
@@ -142,4 +169,21 @@ function reviewsSection(p, all, mode) {
   return `<section class="psec"><div class="psec-h"><h3>${title}</h3>${starsHTML(avg, rows.length)}</div>
     ${rows.slice(0, 6).map((r) => `<div class="review"><div class="row">${starsHTML(r.rating, 1).replace(/ <small>.*<\/small>/, "")}<small>${fmtDate(r.created_at)}</small></div>
       ${r.comment ? `<p>${esc(r.comment)}</p>` : ""}<small>${esc(r.author?.full_name || "A student")}</small></div>`).join("")}</section>`;
+}
+
+// Crop the middle of a photo to a square and shrink it, as a JPEG.
+function squareImage(file, size) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const side = Math.min(img.naturalWidth, img.naturalHeight);
+      const c = document.createElement("canvas");
+      c.width = c.height = Math.min(size, side);
+      c.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error("This photo can't be read. Try a JPG or PNG."))), "image/jpeg", 0.86);
+    };
+    img.onerror = () => { toast("This photo can't be read. Try a JPG or PNG.", "err"); reject(new Error("unreadable")); };
+    img.src = URL.createObjectURL(file);
+  });
 }

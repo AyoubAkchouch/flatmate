@@ -72,14 +72,14 @@ export async function searchAddresses(text) {
     getJSON(`${PHOTON}?q=${enc(text)}&limit=6&lang=en`).catch(() => ({ features: [] })),
   ]);
   const out = (fr.features || []).filter((f) => f.properties.score > 0.55).map((f) => ({
-    name: f.properties.label, detail: f.properties.context || "France", city: f.properties.city || null,
+    name: f.properties.label, detail: f.properties.context || "France", city: f.properties.city || null, country: "France",
     lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] }));
   const near = (a, b) => Math.abs(a.lat - b.lat) < 0.0005 && Math.abs(a.lng - b.lng) < 0.0005;
   for (const f of world.features || []) {
     const p = f.properties;
     const street = [p.housenumber, p.street].filter(Boolean).join(" ");
     const place = { name: [street || p.name, [p.postcode, p.city || p.town || p.village].filter(Boolean).join(" ")].filter(Boolean).join(", "),
-      detail: [p.state, p.country].filter(Boolean).join(", "), city: p.city || p.town || p.village || null,
+      detail: [p.state, p.country].filter(Boolean).join(", "), city: p.city || p.town || p.village || null, country: p.country || null,
       lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
     if (place.name && !out.some((o) => near(o, place))) out.push(place);
   }

@@ -6,6 +6,7 @@ export function renderWelcome() {
   const invited = !!invite.get();
   view().innerHTML = `<div class="welcome">
     ${invited ? `<div class="banner"><b>You've been invited to approve a sublet.</b> Create an account as the owner of the flat, or log in, to join the conversation.</div>` : ""}
+    <img class="welcome-logo" src="${BRAND.logo}" alt="${esc(BRAND.fullName)} logo">
     <h1 class="slogan">${esc(BRAND.slogan)} <em>${esc(BRAND.sloganAccent)}</em></h1>
     <div class="stack">
       <a class="btn primary full" href="#/auth/signup">Create an account</a>

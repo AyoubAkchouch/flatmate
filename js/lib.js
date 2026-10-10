@@ -99,14 +99,31 @@ const PALETTE = ["#D2412E", "#2C57A8", "#1F8A5B", "#7A4FB5", "#C77D10", "#B5476E
 export function initials(name) {
   return String(name || "?").trim().split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 }
-export function avatar(name, seed = name, cls = "") {
+// A round profile picture: the person's photo if they added one, otherwise their initials.
+export function avatar(name, seed = name, cls = "", photo = null) {
+  if (photo) return `<span class="avatar photo ${cls}"><img src="${esc(photoUrl(photo))}" alt="" loading="lazy"></span>`;
   const s = String(seed || "");
   let h = 0;
   for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return `<span class="avatar ${cls}" style="background:${PALETTE[h % PALETTE.length]}">${esc(initials(name))}</span>`;
 }
 
-export const photoUrl = (path) => sb.storage.from("listing-photos").getPublicUrl(path).data.publicUrl;
+// Photos are stored in Supabase, or are full web addresses (the synthetic New York flats).
+export const photoUrl = (path) => /^https?:\/\//.test(path || "") ? path : sb.storage.from("listing-photos").getPublicUrl(path).data.publicUrl;
+
+// ---------- Money: each flat is priced in its own currency ----------
+export const CURRENCIES = { EUR: "€ Euro", USD: "$ US dollar", GBP: "£ Pound sterling", CHF: "CHF Swiss franc", SEK: "SEK Swedish krona",
+  DKK: "DKK Danish krone", NOK: "NOK Norwegian krone", PLN: "PLN Polish złoty", CZK: "CZK Czech koruna", HUF: "HUF Hungarian forint", CAD: "CA$ Canadian dollar" };
+const COUNTRY_CURRENCY = { "united states": "USD", usa: "USD", us: "USD", "united kingdom": "GBP", uk: "GBP", gb: "GBP", switzerland: "CHF", ch: "CHF",
+  sweden: "SEK", se: "SEK", denmark: "DKK", dk: "DKK", norway: "NOK", no: "NOK", poland: "PLN", pl: "PLN", czechia: "CZK", "czech republic": "CZK", cz: "CZK",
+  hungary: "HUF", hu: "HUF", canada: "CAD", ca: "CAD" };
+export const currencyForCountry = (country) => COUNTRY_CURRENCY[String(country || "").trim().toLowerCase()] || "EUR";
+// money(2700, "USD") → "$2,700" · money(650) → "€650"
+export function money(amount, currency = "EUR") {
+  if (amount == null || amount === "") return "";
+  try { return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "EUR", maximumFractionDigits: 0 }).format(amount); }
+  catch { return `${amount} ${currency}`; }
+}
 
 export function storageSafeName(file) {
   const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "jpg";
@@ -124,7 +141,7 @@ export async function geocode(address, city) {
       const j = await r.json();
       const f = j.features && j.features[0];
       if (f && f.properties && f.properties.score > 0.5) {
-        return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], label: f.properties.label };
+        return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], label: f.properties.label, country: "France" };
       }
     }
   } catch (e) { /* try the next service */ }
@@ -133,14 +150,14 @@ export async function geocode(address, city) {
     if (r.ok) {
       const j = await r.json();
       const f = j.features && j.features[0];
-      if (f) return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], label: f.properties.name || text };
+      if (f) return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], label: f.properties.name || text, country: f.properties.country };
     }
   } catch (e) { /* try the next service */ }
   try {
     const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(text)}`);
     if (r.ok) {
       const j = await r.json();
-      if (j[0]) return { lat: +j[0].lat, lng: +j[0].lon, label: j[0].display_name };
+      if (j[0]) return { lat: +j[0].lat, lng: +j[0].lon, label: j[0].display_name, country: String(j[0].display_name).split(",").pop().trim() };
     }
   } catch (e) { /* no result */ }
   return null;
@@ -211,15 +228,16 @@ export function starsHTML(avg, n) {
 
 const round10 = (n) => Math.round(n / 10) * 10;
 export function priceSuggestion(listing, d) {
+  const cur = listing.currency;
   if (d.level === "high") {
     const s = Math.min(listing.lease_rent, round10(listing.rent * 1.08));
     return s > listing.rent
-      ? { price: s, text: `More students want this flat than usual. You could ask €${s} and still match quickly.` }
+      ? { price: s, text: `More students want this flat than usual. You could ask ${money(s, cur)} and still match quickly.` }
       : { price: null, text: "More students want this flat than usual, but you already ask the rent on your lease. A sublet can't cost more than that." };
   }
   if (d.level === "low") {
     const s = round10(listing.rent * 0.9);
-    return { price: s, text: `Fewer students than usual are interested. Asking €${s} should bring more matches. Seekers see it marked as a Hidden gem.` };
+    return { price: s, text: `Fewer students than usual are interested. Asking ${money(s, cur)} should bring more matches. Seekers see it marked as a Hidden gem.` };
   }
   return { price: null, text: "Your price fits current demand. No change suggested." };
 }
