@@ -1,0 +1,394 @@
+-- ============================================================
+-- Flatmate database
+-- Run this whole file once: Supabase → SQL Editor → New query → paste → Run.
+-- Then run seed.sql the same way to add the demo flats.
+-- ============================================================
+
+create extension if not exists pgcrypto with schema extensions;
+
+-- ---------- Settings (one row) ----------
+create table public.app_settings (
+  id int primary key default 1 check (id = 1),
+  auto_approve_checks boolean not null default true  -- true = ID and student checks pass instantly (demo mode)
+);
+insert into public.app_settings default values;
+
+-- ---------- People ----------
+create table public.profiles (
+  id uuid primary key references auth.users on delete cascade,
+  email text,
+  role text check (role in ('seeker','subletter','landlord')),
+  full_name text,
+  home_university text,
+  host_university text,
+  city text,
+  exchange_from date,
+  exchange_to date,
+  phone text,
+  id_status text not null default 'none' check (id_status in ('none','pending','verified','failed')),
+  student_status text not null default 'none' check (student_status in ('none','pending','verified','failed','not_needed')),
+  onboarded boolean not null default false,
+  is_admin boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, email) values (new.id, new.email) on conflict do nothing;
+  return new;
+end $$;
+create trigger on_auth_user_created after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- ---------- Flats ----------
+create table public.listings (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references public.profiles on delete cascade,
+  kind text not null default 'whole' check (kind in ('whole','room')),
+  title text not null,
+  city text not null,
+  area text,
+  address text,
+  lat double precision,
+  lng double precision,
+  near_university text,
+  available_from date,
+  available_to date,
+  size_m2 int not null check (size_m2 > 0),
+  rent int not null check (rent > 0),
+  lease_rent int not null check (lease_rent > 0),
+  tags text[] not null default '{}',
+  photos text[] not null default '{}',
+  landlord_name text,
+  landlord_email text,
+  active boolean not null default true,
+  demo_auto_match boolean not null default false, -- demo flats say yes back automatically
+  baseline_interest int not null default 0,       -- demo flats start with some interest
+  created_at timestamptz not null default now(),
+  constraint rent_not_above_lease check (rent <= lease_rent)
+);
+
+create table public.swipes (
+  id bigint generated always as identity primary key,
+  listing_id uuid not null references public.listings on delete cascade,
+  seeker_id uuid not null references public.profiles on delete cascade,
+  by_role text not null check (by_role in ('seeker','owner')),
+  liked boolean not null,
+  created_at timestamptz not null default now(),
+  unique (listing_id, seeker_id, by_role)
+);
+
+create table public.stars (
+  user_id uuid not null references public.profiles on delete cascade,
+  listing_id uuid not null references public.listings on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, listing_id)
+);
+
+create table public.listing_views (
+  id bigint generated always as identity primary key,
+  listing_id uuid not null references public.listings on delete cascade,
+  user_id uuid not null references public.profiles on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+-- ---------- Matches, chat, contracts ----------
+create table public.matches (
+  id uuid primary key default gen_random_uuid(),
+  listing_id uuid not null references public.listings on delete cascade,
+  seeker_id uuid not null references public.profiles on delete cascade,
+  owner_id uuid not null references public.profiles on delete cascade,
+  landlord_id uuid references public.profiles on delete set null,
+  invite_token text not null default encode(extensions.gen_random_bytes(12), 'hex'),
+  status text not null default 'chatting' check (status in ('chatting','agreed','signed')),
+  created_at timestamptz not null default now(),
+  unique (listing_id, seeker_id)
+);
+
+create table public.messages (
+  id bigint generated always as identity primary key,
+  match_id uuid not null references public.matches on delete cascade,
+  sender_id uuid references public.profiles on delete set null,
+  kind text not null default 'text' check (kind in ('text','system')),
+  body text not null check (length(body) between 1 and 2000),
+  created_at timestamptz not null default now()
+);
+
+create table public.contracts (
+  match_id uuid primary key references public.matches on delete cascade,
+  template text not null default 'standard',
+  seeker_signature text, seeker_signed_at timestamptz,
+  owner_signature text, owner_signed_at timestamptz,
+  landlord_signature text, landlord_signed_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+-- ---------- Verification ----------
+create table public.verifications (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles on delete cascade,
+  kind text not null check (kind in ('identity','student')),
+  document_type text,
+  files text[] not null default '{}',
+  status text not null default 'pending' check (status in ('pending','verified','failed')),
+  created_at timestamptz not null default now(),
+  reviewed_at timestamptz
+);
+
+-- ============================================================
+-- Helper functions
+-- ============================================================
+create function public.is_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select is_admin from profiles where id = auth.uid()), false)
+$$;
+
+create function public.is_match_member(m uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from matches where id = m and auth.uid() in (seeker_id, owner_id, landlord_id))
+$$;
+
+-- When both sides say yes, create the match, its chat and its contract.
+create function public.on_swipe() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  l listings;
+  mid uuid;
+begin
+  if not new.liked then return new; end if;
+  select * into l from listings where id = new.listing_id;
+
+  if new.by_role = 'seeker' and l.demo_auto_match then
+    insert into swipes (listing_id, seeker_id, by_role, liked)
+      values (new.listing_id, new.seeker_id, 'owner', true) on conflict do nothing;
+    return new;
+  end if;
+
+  if exists (select 1 from swipes where listing_id = new.listing_id and seeker_id = new.seeker_id
+             and liked and by_role <> new.by_role) then
+    insert into matches (listing_id, seeker_id, owner_id)
+      values (new.listing_id, new.seeker_id, l.owner_id)
+      on conflict (listing_id, seeker_id) do nothing
+      returning id into mid;
+    if mid is not null then
+      insert into contracts (match_id) values (mid);
+      insert into messages (match_id, kind, body)
+        values (mid, 'system', 'You both said yes. Say hello, then add the landlord when you are ready to agree.');
+      if l.demo_auto_match then
+        insert into messages (match_id, sender_id, body)
+          values (mid, l.owner_id, 'Hi! Happy you like the place. When does your exchange start exactly?');
+      end if;
+    end if;
+  end if;
+  return new;
+end $$;
+create trigger swipe_match after insert on public.swipes
+  for each row execute function public.on_swipe();
+
+-- The landlord opens the invite link and joins the chat.
+create function public.accept_invite(token text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  m matches;
+  nm text;
+begin
+  select * into m from matches where invite_token = token;
+  if m.id is null then raise exception 'This invitation link is not valid.'; end if;
+  if m.landlord_id is not null and m.landlord_id <> auth.uid() then
+    raise exception 'Another landlord already joined this chat.';
+  end if;
+  if m.landlord_id is null then
+    update matches set landlord_id = auth.uid() where id = m.id;
+    select full_name into nm from profiles where id = auth.uid();
+    insert into messages (match_id, kind, body)
+      values (m.id, 'system', coalesce(nm, 'The landlord') || ' (landlord) joined the chat.');
+  end if;
+  return m.id;
+end $$;
+
+create function public.agree_terms(m uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare nm text;
+begin
+  if not is_match_member(m) then raise exception 'You are not part of this chat.'; end if;
+  if not exists (select 1 from matches where id = m and landlord_id is not null) then
+    raise exception 'Add the landlord to the chat before agreeing.';
+  end if;
+  update matches set status = 'agreed' where id = m and status = 'chatting';
+  if found then
+    select full_name into nm from profiles where id = auth.uid();
+    insert into messages (match_id, kind, body)
+      values (m, 'system', coalesce(nm, 'Someone') || ' marked the terms as agreed. The contract is ready to sign.');
+  end if;
+end $$;
+
+-- Each person signs their own line of the contract.
+create function public.sign_contract(m uuid, signature text, tpl text) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  mt matches;
+  c contracts;
+begin
+  select * into mt from matches where id = m;
+  if mt.id is null or not is_match_member(m) then raise exception 'You are not part of this contract.'; end if;
+  if mt.status = 'chatting' then raise exception 'Agree on the terms in the chat first.'; end if;
+  select * into c from contracts where match_id = m;
+  if c.seeker_signature is null and c.owner_signature is null and c.landlord_signature is null and tpl is not null then
+    update contracts set template = tpl where match_id = m;
+  end if;
+  if auth.uid() = mt.seeker_id then
+    update contracts set seeker_signature = signature, seeker_signed_at = now(), updated_at = now() where match_id = m;
+  elsif auth.uid() = mt.owner_id then
+    update contracts set owner_signature = signature, owner_signed_at = now(), updated_at = now() where match_id = m;
+  else
+    update contracts set landlord_signature = signature, landlord_signed_at = now(), updated_at = now() where match_id = m;
+  end if;
+  -- Demo flats: the demo student signs automatically, since nobody can log in as them.
+  if exists (select 1 from listings where id = mt.listing_id and demo_auto_match) then
+    update contracts set
+      owner_signature = 'data:image/svg+xml;utf8,' || replace(replace(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60"><text x="10" y="42" font-family="cursive" font-size="28" fill="#16233F">'
+        || (select full_name from profiles where id = mt.owner_id) || '</text></svg>', '#', '%23'), '"', '%22'),
+      owner_signed_at = now()
+    where match_id = m and owner_signature is null;
+  end if;
+  if exists (select 1 from contracts where match_id = m and seeker_signature is not null
+             and owner_signature is not null and landlord_signature is not null) then
+    update matches set status = 'signed' where id = m;
+    insert into messages (match_id, kind, body) values (m, 'system', 'The contract is signed by all three of you.');
+  end if;
+end $$;
+
+-- Submit an ID or student document. Demo mode approves it straight away.
+create function public.submit_verification(check_kind text, doc_type text, file_paths text[]) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  auto boolean;
+  st text;
+begin
+  select auto_approve_checks into auto from app_settings where id = 1;
+  st := case when auto then 'verified' else 'pending' end;
+  insert into verifications (user_id, kind, document_type, files, status, reviewed_at)
+    values (auth.uid(), check_kind, doc_type, file_paths, st, case when auto then now() end);
+  if check_kind = 'identity' then
+    update profiles set id_status = st where id = auth.uid();
+  else
+    update profiles set student_status = st where id = auth.uid();
+  end if;
+  return st;
+end $$;
+
+create function public.skip_student_check() returns void
+language sql security definer set search_path = public as $$
+  update profiles set student_status = 'not_needed' where id = auth.uid() and role = 'landlord';
+$$;
+
+create function public.review_verification(vid bigint, approve boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare v verifications; st text;
+begin
+  if not is_admin() then raise exception 'Only admins can review checks.'; end if;
+  st := case when approve then 'verified' else 'failed' end;
+  update verifications set status = st, reviewed_at = now() where id = vid returning * into v;
+  if v.kind = 'identity' then
+    update profiles set id_status = st where id = v.user_id;
+  else
+    update profiles set student_status = st where id = v.user_id;
+  end if;
+end $$;
+
+create function public.set_auto_approve(on_off boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Only admins can change this.'; end if;
+  update app_settings set auto_approve_checks = on_off where id = 1;
+end $$;
+
+-- Views and interest over the last 7 days, used by the demand calculator.
+create function public.listing_stats()
+returns table (listing_id uuid, views_7d int, interested_7d int)
+language sql stable security definer set search_path = public as $$
+  select l.id,
+    (select count(*) from listing_views v where v.listing_id = l.id and v.created_at > now() - interval '7 days')::int,
+    ((select count(*) from swipes s where s.listing_id = l.id and s.by_role = 'seeker' and s.liked
+        and s.created_at > now() - interval '7 days')
+     + (select count(*) from stars st where st.listing_id = l.id and st.created_at > now() - interval '7 days')
+     + l.baseline_interest)::int
+  from listings l where l.active
+$$;
+
+-- ============================================================
+-- Security: who can read and change what
+-- ============================================================
+alter table public.app_settings enable row level security;
+alter table public.profiles enable row level security;
+alter table public.listings enable row level security;
+alter table public.swipes enable row level security;
+alter table public.stars enable row level security;
+alter table public.listing_views enable row level security;
+alter table public.matches enable row level security;
+alter table public.messages enable row level security;
+alter table public.contracts enable row level security;
+alter table public.verifications enable row level security;
+
+create policy "settings readable" on public.app_settings for select to authenticated using (true);
+
+create policy "profiles readable" on public.profiles for select to authenticated using (true);
+create policy "edit own profile" on public.profiles for update to authenticated using (id = auth.uid());
+-- People can edit their details, but not their verification status or admin flag.
+revoke update on public.profiles from authenticated, anon;
+grant update (role, full_name, home_university, host_university, city, exchange_from, exchange_to, phone, onboarded)
+  on public.profiles to authenticated;
+
+create policy "listings readable" on public.listings for select to authenticated using (true);
+create policy "create own listing" on public.listings for insert to authenticated with check (owner_id = auth.uid());
+create policy "edit own listing" on public.listings for update to authenticated using (owner_id = auth.uid());
+create policy "delete own listing" on public.listings for delete to authenticated using (owner_id = auth.uid());
+revoke insert, update on public.listings from authenticated, anon;
+grant insert (owner_id, kind, title, city, area, address, lat, lng, near_university, available_from, available_to,
+  size_m2, rent, lease_rent, tags, photos, landlord_name, landlord_email, active) on public.listings to authenticated;
+grant update (kind, title, city, area, address, lat, lng, near_university, available_from, available_to,
+  size_m2, rent, lease_rent, tags, photos, landlord_name, landlord_email, active) on public.listings to authenticated;
+
+create policy "see swipes about me or my flats" on public.swipes for select to authenticated using (
+  seeker_id = auth.uid() or exists (select 1 from listings l where l.id = listing_id and l.owner_id = auth.uid()));
+create policy "swipe" on public.swipes for insert to authenticated with check (
+  (by_role = 'seeker' and seeker_id = auth.uid())
+  or (by_role = 'owner' and exists (select 1 from listings l where l.id = listing_id and l.owner_id = auth.uid())));
+
+create policy "own stars" on public.stars for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+create policy "record views" on public.listing_views for insert to authenticated with check (user_id = auth.uid());
+
+create policy "see my matches" on public.matches for select to authenticated
+  using (auth.uid() in (seeker_id, owner_id, landlord_id));
+
+create policy "read chat" on public.messages for select to authenticated using (is_match_member(match_id));
+create policy "write chat" on public.messages for insert to authenticated
+  with check (sender_id = auth.uid() and kind = 'text' and is_match_member(match_id));
+
+create policy "read contract" on public.contracts for select to authenticated using (is_match_member(match_id));
+
+create policy "own checks" on public.verifications for select to authenticated using (user_id = auth.uid() or is_admin());
+
+-- ============================================================
+-- File storage
+-- ============================================================
+insert into storage.buckets (id, name, public) values ('listing-photos', 'listing-photos', true)
+  on conflict (id) do nothing;
+insert into storage.buckets (id, name, public) values ('verification', 'verification', false)
+  on conflict (id) do nothing;
+
+create policy "upload own flat photos" on storage.objects for insert to authenticated
+  with check (bucket_id = 'listing-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "upload own documents" on storage.objects for insert to authenticated
+  with check (bucket_id = 'verification' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "read own documents or admin" on storage.objects for select to authenticated
+  using (bucket_id = 'verification' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+
+-- ============================================================
+-- Live updates for chat and contracts
+-- ============================================================
+alter publication supabase_realtime add table public.messages, public.matches, public.contracts;

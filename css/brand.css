@@ -1,0 +1,39 @@
+/* ============================================================
+   BRAND: change the look of the whole app here.
+   Fonts, colors, corner roundness. The name lives in js/brand.js.
+   ============================================================ */
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+:root {
+  /* Fonts: display = titles, body = text, mono = small labels and dates */
+  --display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --body: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+  /* Light theme colors */
+  --bg: #EEF1F4;        /* page background */
+  --surface: #FFFFFF;   /* cards */
+  --ink: #16233F;       /* main text, dark buttons */
+  --muted: #5C6880;     /* secondary text */
+  --line: #D6DCE5;      /* borders */
+  --red: #D2412E;       /* main accent */
+  --red-soft: #F9E4E0;
+  --blue: #2C57A8;      /* second accent */
+  --blue-soft: #E3EAF7;
+  --ok: #1F8A5B;        /* verified, success */
+  --ok-soft: #DFF2E8;
+  --gold: #9A6A00;      /* stars, hidden gems */
+  --gold-soft: #FBF0D2;
+
+  --radius: 14px;
+}
+
+/* Dark theme colors (used when the phone or computer is in dark mode) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F1524; --surface: #18213A; --ink: #E7ECF5; --muted: #9AA6BF; --line: #2A3654;
+    --red: #F06A55; --red-soft: #3D2226; --blue: #7FA3EE; --blue-soft: #22325A;
+    --ok: #4CC38A; --ok-soft: #173A2C; --gold: #F2B935; --gold-soft: #3A3016;
+    color-scheme: dark;
+  }
+}
