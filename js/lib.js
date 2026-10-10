@@ -33,6 +33,33 @@ setInterval(async () => {
   if (Date.now() - lastActive > IDLE_MS) { await sb.auth.signOut(); toast("You were logged out after 30 minutes without activity."); }
 }, 60 * 1000);
 
+// ---------- Phone or desktop layout ----------
+// "auto" picks the desktop layout on screens 960px wide or more. People can also force one
+// (Profile → Display), or open the site with ?layout=mobile or ?layout=desktop, e.g. for a demo.
+const LAYOUT = "fm-layout";
+const wideScreen = window.matchMedia("(min-width: 960px)");
+export const layout = {
+  get: () => safe(() => localStorage.getItem(LAYOUT), null) || "auto",
+  set: (v) => { safe(() => (v === "auto" ? localStorage.removeItem(LAYOUT) : localStorage.setItem(LAYOUT, v))); applyLayout(); },
+};
+export const isDesktop = () => document.documentElement.classList.contains("desk");
+export function applyLayout() {
+  const pref = layout.get();
+  const desk = pref === "desktop" || (pref === "auto" && wideScreen.matches);
+  const changed = desk !== isDesktop();
+  document.documentElement.classList.toggle("desk", desk);
+  document.documentElement.classList.toggle("phone", !desk);
+  if (changed) window.dispatchEvent(new Event("fm-layout"));
+}
+{
+  const forced = new URLSearchParams(location.search).get("layout");
+  if (forced === "mobile" || forced === "phone") safe(() => localStorage.setItem(LAYOUT, "mobile"));
+  else if (forced === "desktop") safe(() => localStorage.setItem(LAYOUT, "desktop"));
+  else if (forced === "auto") safe(() => localStorage.removeItem(LAYOUT));
+}
+wideScreen.addEventListener("change", applyLayout);
+applyLayout();
+
 // The signed-in person and their profile row.
 export const state = { session: null, profile: null, cleanup: null };
 

@@ -1,5 +1,5 @@
 // Profile: your details, your flats with the demand calculator, your starred flats.
-import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, demandData, priceSuggestion, starsHTML, fmtDate, fmtShort, loadProfile, photoUrl, money, storageSafeName } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, demandData, priceSuggestion, starsHTML, fmtDate, fmtShort, loadProfile, photoUrl, money, storageSafeName, layout } from "../lib.js";
 import { ROLE_LABEL } from "./onboarding.js";
 import { schoolsNear } from "../schools.js";
 import { needsChecks, startChecks } from "./discover.js";
@@ -95,6 +95,10 @@ export async function renderProfile() {
         ${mine.length ? mine.map(listingCard).join("") : `<p class="lead">Leaving your own flat empty during your exchange? List it and see how much demand there is.</p>`}</section>`}
     ${mode === "seeker" ? `<section class="psec"><h3>Starred flats</h3>${starred.length ? starred.map(starRow).join("") : `<p class="lead">Tap the star on a flat while swiping to keep it here.</p>`}</section>` : ""}
     ${reviewsSection(p, aboutMe, mode)}
+    <section class="psec"><h3>Display</h3>
+      <div class="seg" role="group" aria-label="Layout">${[["auto", "Automatic"], ["mobile", "Phone"], ["desktop", "Desktop"]].map(([k, t]) =>
+        `<button type="button" data-layout="${k}" aria-pressed="${layout.get() === k}">${t}</button>`).join("")}</div>
+      <small style="color:var(--muted);font-size:12px">Automatic uses the desktop layout on wide screens and the phone layout everywhere else.</small></section>
     <section class="psec">
       ${p.is_admin ? `<a class="btn" href="#/admin">Review verification checks</a>` : ""}
       <button class="btn" id="logout">Log out</button></section>
@@ -158,6 +162,10 @@ export async function renderProfile() {
     toast("Photo removed.");
     renderProfile();
   };
+  view().querySelectorAll("[data-layout]").forEach((b) => (b.onclick = () => {
+    layout.set(b.dataset.layout);
+    view().querySelectorAll("[data-layout]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  }));
   document.getElementById("logout").onclick = async () => { await sb.auth.signOut(); go("welcome"); };
 }
 

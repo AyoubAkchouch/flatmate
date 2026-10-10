@@ -30,6 +30,7 @@ const ROUTES = {
   invite: renderInvite,
   preferences: renderPreferences,
 };
+window.addEventListener("fm-layout", () => route());
 const PUBLIC = ["welcome", "auth"];
 const TABS = { discover: "discover", list: "discover", chats: "chats", chat: "chats", contracts: "contracts", contract: "contracts", profile: "profile", admin: "profile", preferences: "profile" };
 

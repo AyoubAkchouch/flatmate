@@ -375,3 +375,62 @@ canvas.pad{width:100%;height:110px;border:1px dashed var(--line);border-radius:8
 .feerow small{color:var(--muted);font-size:12px}
 .sigmeta.locked{color:var(--ink);background:var(--accent-soft);padding:8px 10px;border-radius:8px}
 .checkout h2{font-size:34px}
+
+/* ============================================================
+   DESKTOP LAYOUT (html.desk): side menu, wide content, details beside the card.
+   The phone layout above stays as it is.
+   ============================================================ */
+.deck-side{display:none}
+html.desk body{padding-inline:0}
+html.desk .app{max-width:none;display:grid;grid-template-columns:248px minmax(0,1fr);grid-template-rows:auto auto 1fr;grid-template-areas:"air air" "head main" "nav main";height:100vh}
+html.desk .airmail{grid-area:air;border-radius:0}
+html.desk header.top{grid-area:head;flex-direction:column;align-items:flex-start;padding:26px 24px 18px;border-right:1px solid var(--line)}
+html.desk .brand{font-size:30px}
+html.desk .brand-mark{height:40px}
+html.desk nav.tabs{grid-area:nav;display:flex;flex-direction:column;justify-content:flex-start;gap:4px;border-top:0;border-right:1px solid var(--line);padding:6px 14px}
+html.desk nav.tabs[hidden]{display:flex!important;visibility:hidden}
+html.desk nav.tabs a{flex-direction:row;justify-content:flex-start;gap:12px;font-size:15px;padding:11px 12px;border-radius:10px}
+html.desk nav.tabs a:hover{background:var(--accent-soft);color:var(--ink)}
+html.desk nav.tabs a[aria-current="page"]{background:var(--accent-soft);color:var(--accent)}
+html.desk nav.tabs a[aria-current="page"]::before{display:none}
+html.desk main{grid-area:main;padding:28px 40px 40px;overflow-y:auto}
+html.desk main > *{max-width:820px;margin-inline:auto}
+html.desk .toast{top:24px}
+
+/* Welcome: logo and slogan on the left, the two buttons on the right */
+html.desk .app:has(.welcome){grid-template-columns:1fr;grid-template-areas:"air" "main"}
+html.desk .app:has(.welcome) header.top,html.desk .app:has(.welcome) nav.tabs{display:none!important}
+html.desk main > .welcome{max-width:1080px;display:grid;grid-template-columns:1.25fr 1fr;grid-template-rows:auto auto 1fr;column-gap:72px;align-content:center;min-height:calc(100vh - 80px)}
+html.desk .welcome .banner{grid-column:1 / -1}
+html.desk .welcome-logo{width:230px;grid-column:1}
+html.desk .welcome .slogan{grid-column:1;font-size:64px}
+html.desk .welcome .stack{grid-column:2;grid-row:1 / span 2;align-self:center;max-width:380px}
+html.desk .welcome .credit{grid-column:1 / -1}
+
+/* Forms and sign-up stay a comfortable reading width */
+html.desk main > .ob{max-width:600px}
+
+/* Discover: the card on the left, everything about it on the right */
+html.desk main > :has(.discover-grid),html.desk main > .filters{max-width:1100px}
+html.desk .discover-grid{display:grid;grid-template-columns:420px minmax(0,1fr);gap:36px;align-items:start;max-width:1100px;margin-inline:auto}
+html.desk .deck{height:min(560px,70vh)}
+html.desk .deck-side{display:block;position:sticky;top:0}
+html.desk .deck-side:empty{display:none}
+html.desk .discover-grid:has(.deck-side:empty){grid-template-columns:440px;justify-content:center}
+html.desk .side-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+html.desk .side-card .gallery img,html.desk .side-card .gallery .plan{height:320px}
+html.desk .side-card .sheet-body{padding:20px 24px 24px;gap:12px}
+html.desk .side-card h2{font-size:30px}
+html.desk .fab{position:fixed;right:40px;bottom:40px}
+html.desk .hint{padding-inline:0}
+
+/* Sheets and dialogs open as centred windows */
+html.desk .sheet-wrap{place-items:center;padding:24px}
+html.desk .sheet{border-radius:20px;max-height:88vh}
+
+/* Chat and leases: wider, the chat fills the height */
+html.desk main > .chat{max-width:860px;min-height:calc(100vh - 110px)}
+html.desk .lease{font-size:15px;padding:32px 40px 80px}
+
+/* Phone layout chosen on a wide screen: keep the phone column centred */
+html.phone .app{max-width:440px}
