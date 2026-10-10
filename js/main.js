@@ -10,6 +10,7 @@ import { renderContracts, renderContract } from "./views/contract.js";
 import { renderProfile } from "./views/profile.js";
 import { renderAdmin } from "./views/admin.js";
 import { renderInvite } from "./views/invite.js";
+import { renderPreferences } from "./views/preferences.js";
 
 document.title = BRAND.fullName;
 document.getElementById("brand").innerHTML = `${esc(BRAND.nameStart)}<span>${esc(BRAND.nameEnd)}</span>`;
@@ -27,9 +28,10 @@ const ROUTES = {
   profile: renderProfile,
   admin: renderAdmin,
   invite: renderInvite,
+  preferences: renderPreferences,
 };
 const PUBLIC = ["welcome", "auth"];
-const TABS = { discover: "discover", list: "discover", chats: "chats", chat: "chats", contracts: "contracts", contract: "contracts", profile: "profile", admin: "profile" };
+const TABS = { discover: "discover", list: "discover", chats: "chats", chat: "chats", contracts: "contracts", contract: "contracts", profile: "profile", admin: "profile", preferences: "profile" };
 
 let routing = false, again = false;
 async function route() {

@@ -275,3 +275,24 @@ canvas.pad{width:100%;height:110px;border:1px dashed var(--line);border-radius:8
 .near-list b{color:var(--ink);font-weight:600}
 .remember{display:flex;gap:8px;align-items:center;font-size:14px}
 .remember input{width:18px;height:18px;accent-color:var(--red)}
+
+/* Ratings, match score, preferences */
+.rating{color:var(--gold);font-size:13px;font-weight:600;white-space:nowrap}
+.rating small{color:var(--muted);font-weight:500}
+.mscore{position:absolute;right:56px;top:10px;height:38px;padding:0 10px;border-radius:19px;background:var(--surface);border:1px solid var(--line);display:flex;align-items:center;gap:4px;font:700 14px var(--display);color:var(--ink)}
+.mscore small{font:500 10px var(--mono);color:var(--muted);letter-spacing:.06em}
+.why{font-size:12.5px;color:var(--muted);line-height:1.35}
+.why b{color:var(--ink);font-weight:600}
+.tierlabel{font-size:12px;font-weight:600;color:var(--gold);background:var(--gold-soft);padding:3px 8px;border-radius:5px;justify-self:start}
+.pref-sec{display:grid;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+.pref-sec h3{font-family:var(--display);font-size:17px;margin:0}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{border:1px solid var(--line);background:var(--bg);color:var(--ink);font:600 13px var(--body);padding:7px 12px;border-radius:20px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.starpick{display:flex;gap:4px}
+.starpick button{background:none;border:0;font-size:30px;line-height:1;color:var(--line);cursor:pointer;padding:0 2px}
+.starpick button.on{color:var(--gold)}
+.review{display:grid;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px}
+.review p{margin:0;font-size:14px}
+.review small{color:var(--muted);font-size:12px}
+.checkchips label:has(input:disabled){opacity:.4;cursor:not-allowed}

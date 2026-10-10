@@ -1,8 +1,8 @@
 // Add or edit a flat to sublet. #/list = new flat, #/list/<id> = edit.
-import { sb, state, view, go, esc, q, toast, ICON, geocode, photoUrl, storageSafeName } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, FEATURES, ICON, geocode, photoUrl, storageSafeName } from "../lib.js";
 import { searchAddresses, autocomplete } from "../schools.js";
 
-const TAGS = ["Furnished", "Bills included", "Washing machine", "Wi-Fi", "Balcony", "Near public transport", "Bike storage", "Quiet street"];
+const TAGS = FEATURES;
 
 export async function renderListingForm(id) {
   const p = state.profile;

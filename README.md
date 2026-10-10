@@ -20,7 +20,8 @@ Built for a hackathon. Contract templates are placeholders, not legal documents.
 | `supabase/synthetic-data-paris-100.sql` | Smaller set: 100 fake flats and 100 fake students in the Paris region; replaces earlier fake data |
 | `supabase/synthetic-cleanup.sql` | Deletes all of that fake data, and nothing else |
 | `supabase/update-2-schools-and-invites.sql` | Update for projects created before 10 Oct 2026, 13:00 (already inside schema.sql) |
-| `supabase/update-3-fast-feed.sql` | Speed update (indexes, faster statistics, ranked feed in the database). Prepared, not yet used by the app; safe to run any time (already inside schema.sql) |
+| `supabase/update-3-fast-feed.sql` | Speed update. Superseded by update 4, which includes it |
+| `supabase/update-4-preferences-reviews-ranking.sql` | Preferences, reviews, compatibility ranking, and the speed update (already inside schema.sql) |
 
 There is no build step. The files are served as they are.
 
@@ -62,6 +63,9 @@ You then get a **Review verification checks** button in your profile.
 - **Logging in:** a login only lasts while the browser tab is open, and ends after 30 minutes without activity, unless the person ticks "Keep me logged in on this device".
 - **Schools:** home universities come from the worldwide Research Organization Registry (ror.org). Destination schools come from the French higher-education ministry's list of recognised institutions, with the GPS position of their main site; students can pin another campus by address.
 - **Travel time:** the flat's address is turned into coordinates with the French national geocoder (or OpenStreetMap outside France). Seekers see the time to their own campus; subletters see the time from their flat to each applicant's school and to recognised schools nearby. Times are estimates from distance, not live transit routes.
+- **Preferences:** seekers set budget, flat or room, longest commute, must-haves, nice-to-haves and what they're like as a flatmate; subletters set the minimum stay and the tenant they'd like. Editable any time from the profile.
+- **Compatibility ranking:** the database ranks flats for each seeker (`seeker_feed`) and applicants for each subletter (`owner_applicants`), and sends 20 at a time. Seekers: flats that fit everything come first, then near misses with a label saying what's off, then anything else nearby. Score out of 100: dates 25, commute 25, budget 15, value for the area 5, wishes 10, trust and ratings 15, new listing 5. Applicants: share of the free period used 30, lifestyle match 20, commute 15, ratings as a tenant 15, verification 15, budget 5.
+- **Reviews:** after a signed contract, the subtenant rates the flat and the tenant rates the subtenant (1 to 5 stars and a comment). Ratings show on cards and profiles and feed into the ranking. Reviews are allowed right after signing for the demo; the admin page can restrict them to after move-out.
 - **Demand:** counts views, yeses and stars from the last 7 days and compares each flat with the others in the same city. With little activity, it compares price per m² instead. Demo flats start with some interest so the badges show.
 - **Contracts:** each person draws their signature on their own account. When all three have signed, anyone can save it as a PDF.
 

@@ -1,5 +1,5 @@
 // Discover: seekers swipe flats, subletters swipe the students who liked their flat, landlords see their requests.
-import { sb, state, view, go, esc, q, toast, fetchAll, ICON, avatar, photoUrl, floorPlan, travelTo, hostPlace, demandFor, fmtShort, fmtDate } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, ICON, avatar, photoUrl, floorPlan, demandFor, starsHTML, fmtShort, fmtDate } from "../lib.js";
 
 const loading = `<p class="loading">Loading…</p>`;
 
@@ -12,10 +12,28 @@ export async function renderDiscover() {
 }
 
 // ---------- Swipe mechanics shared by both decks ----------
-function mountDeck({ items, card, onSwipe, onTop, empty }) {
+function mountDeck({ items, card, onSwipe, onTop, empty, refill }) {
   const deckEl = document.getElementById("deck");
+  let loading = false;
+  const topUp = async () => {
+    // Fetch the next batch before the deck runs out.
+    if (!refill || loading || items.length > 4) return;
+    loading = true;
+    try {
+      const more = await refill();
+      const known = new Set(items.map((i) => i.id));
+      const wasEmpty = !items.length;
+      more.filter((m) => !known.has(m.id)).forEach((m) => items.push(m));
+      if (!more.length) refill = null;
+      if (wasEmpty && items.length) draw();
+    } finally { loading = false; }
+  };
   const draw = () => {
-    if (!items.length) { deckEl.parentElement.innerHTML = empty(); return; }
+    if (!items.length) {
+      if (refill) { deckEl.innerHTML = `<p class="loading">Finding more flats…</p>`; topUp().then(() => { if (!items.length) draw(); }); return; }
+      deckEl.parentElement.innerHTML = empty(); return;
+    }
+    topUp();
     deckEl.innerHTML = "";
     items.slice(0, 2).reverse().forEach((item, i, arr) => {
       const top = i === arr.length - 1;
@@ -85,60 +103,67 @@ async function findMatch(listingId, seekerId) {
   return data;
 }
 
-// ---------- Seeker: swipe flats ----------
+// ---------- Seeker: ranked flats, 20 at a time ----------
+// The ranking happens in the database (seeker_feed): see supabase/update-4-preferences-reviews-ranking.sql.
+function whyLine(l, p) {
+  const bits = [];
+  if (l.minutes != null) bits.push(`<b>${l.minutes} min</b> to ${esc(p.host_university || "your school")}`);
+  bits.push(l.overlap_pct >= 95 ? "<b>covers your whole stay</b>" : `covers <b>${l.overlap_pct}%</b> of your stay`);
+  if (l.budget_max) bits.push(l.rent <= l.budget_max ? `<b>€${l.budget_max - l.rent}</b> under budget` : `<b>€${l.rent - l.budget_max}</b> over budget`);
+  return bits.join(" · ");
+}
+function outsideLabel(l, p) {
+  if (l.tier === 1) return "";
+  const why = [];
+  if (l.minutes != null && l.minutes > (p.max_commute || 45)) why.push(`${l.minutes} min away`);
+  if (l.budget_max && l.rent > l.budget_max * 1.05) why.push(`€${l.rent - l.budget_max} over budget`);
+  if (!l.kind_ok) why.push(l.kind === "room" ? "a room, not a whole flat" : "a whole flat, not a room");
+  if (l.missing && l.missing.length) why.push(`no ${l.missing.map((m) => m.toLowerCase()).join(", ")}`);
+  if (l.overlap_pct < 60) why.push(`free for ${l.overlap_pct}% of your stay`);
+  return why.length ? `<span class="tierlabel">Outside your filters: ${esc(why.join(" · "))}</span>` : "";
+}
+
 async function seekerDeck() {
   const p = state.profile;
-  const [listings, swiped, stars, statsRows] = await Promise.all([
-    fetchAll(() => {
-      let qy = sb.from("listings").select("*, owner:profiles!listings_owner_id_fkey(full_name, home_university, host_university, id_status, student_status)").eq("active", true);
-      if (p.city) qy = qy.ilike("city", p.city.trim());
-      return qy.order("id");
-    }),
-    fetchAll(() => sb.from("swipes").select("listing_id").eq("seeker_id", p.id).eq("by_role", "seeker").order("id")),
-    q(sb.from("stars").select("listing_id").eq("user_id", p.id)),
-    fetchAll(() => sb.rpc("listing_stats").order("listing_id")),
-  ]);
-  const stats = Object.fromEntries(statsRows.map((r) => [r.listing_id, r]));
-  const done = new Set(swiped.map((s) => s.listing_id));
-  const starred = new Set(stars.map((s) => s.listing_id));
-  const city = (p.city || "").trim().toLowerCase();
-  const inCity = listings.filter((l) => !city || l.city.trim().toLowerCase() === city);
-
-  // Flats whose dates overlap your exchange the most come first.
-  const overlap = (l) => {
-    if (!p.exchange_from || !l.available_from) return 0;
-    const a = Math.max(+new Date(p.exchange_from), +new Date(l.available_from));
-    const b = Math.min(+new Date(p.exchange_to || p.exchange_from), +new Date(l.available_to || l.available_from));
-    return Math.max(0, b - a);
+  const exclude = [];
+  const loadBatch = async () => {
+    const rows = await q(sb.rpc("seeker_feed", { p_limit: 20, p_exclude: exclude }));
+    rows.forEach((r) => exclude.push(r.id));
+    return rows;
   };
-  const items = inCity.filter((l) => l.owner_id !== p.id && !done.has(l.id)).sort((a, b) => overlap(b) - overlap(a));
+  const [items, stars] = await Promise.all([loadBatch(), q(sb.from("stars").select("listing_id").eq("user_id", p.id))]);
+  const starred = new Set(stars.map((s) => s.listing_id));
   const seen = new Set();
+  const needsPrefs = p.budget_max == null;
 
-  view().innerHTML = deckShell(
-    `<span class="chip">City <b>${esc(p.city || "Any")}</b></span>${p.exchange_from ? `<span class="chip">Dates <b>${fmtShort(p.exchange_from)} – ${fmtShort(p.exchange_to)}</b></span>` : ""}`,
-    "Drag the card right if you're interested, left to pass. Tap the star to save a flat.");
+  view().innerHTML = (needsPrefs ? `<a class="banner" href="#/preferences" style="display:block;margin-bottom:12px;text-decoration:none">
+      <b>Set your budget and wishes</b> to get flats ranked for you. →</a>` : "")
+    + deckShell(
+      `<span class="chip">Near <b>${esc(p.host_university || p.city || "you")}</b></span>${p.budget_max ? `<span class="chip">Up to <b>€${p.budget_max}</b></span>` : ""}
+       <a class="chip" href="#/preferences" style="text-decoration:none">Preferences ›</a>`,
+      "Best matches first. Drag right if you're interested, left to pass.");
 
   mountDeck({
     items,
+    refill: loadBatch,
     card: (l) => {
-      const d = demandFor(l, stats, inCity);
-      const tr = travelTo(l, hostPlace(p));
+      const d = demandFor(l, l, { flats: l.city_flats, avg_interest: l.city_avg_interest, median_eur_m2: l.city_median_eur_m2 });
       const on = starred.has(l.id);
-      const owner = l.owner || {};
       const photo = l.photos && l.photos[0];
       return `<div class="plan ${photo ? "photo" : ""}" ${photo ? `style="background-image:url('${esc(photoUrl(photo))}')"` : ""}>
           <span class="meta">${l.size_m2} m² · ${esc(l.area || l.city)}</span>${photo ? "" : floorPlan(l.kind, l.id)}
           ${l.photos.length > 1 ? `<span class="count">${ICON.photo.replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-2px"')} ${l.photos.length}</span>` : ""}
+          <span class="mscore" title="How well this flat matches your preferences">${l.score}<small>% MATCH</small></span>
           <button class="star ${on ? "on" : ""}" data-star="${l.id}" aria-pressed="${on}" aria-label="Star this flat">${ICON.star}</button>
           ${d.level === "high" ? `<span class="dpill high">High demand${d.basis === "interest" ? ` · ${d.interested} interested this week` : ""}</span>`
             : d.level === "low" ? `<span class="dpill gem">${ICON.gem}Hidden gem</span>` : ""}
           <span class="stamp like">YES</span><span class="stamp nope">PASS</span></div>
-        <div class="info"><h2>${esc(l.title)}</h2>
+        <div class="info">${outsideLabel(l, p)}<h2>${esc(l.title)}</h2>
           <div class="row"><span class="price">€${l.rent.toLocaleString("en")}<small> / month</small></span>
             <span class="dates">${fmtShort(l.available_from)} → ${fmtDate(l.available_to)}</span></div>
-          ${tr ? `<div class="commute">${ICON.train}<span><b>${tr.minutes} min</b> to ${esc(tr.uni)}${p.host_campus ? " (your campus)" : ""} by public transport</span></div>` : ""}
-          <div class="host">${avatar(owner.full_name, l.owner_id)}<span><b>${esc(owner.full_name || "Student")}</b>${owner.home_university ? ` · ${esc(owner.home_university)}` : ""}
-            ${owner.id_status === "verified" ? ` · <span style="color:var(--ok)">verified</span>` : ""}</span></div>
+          <div class="why">${whyLine(l, p)}</div>
+          <div class="host">${avatar(l.owner_name, l.owner_id)}<span><b>${esc(l.owner_name || "Student")}</b>${l.owner_verified ? ` · <span style="color:var(--ok)">verified</span>` : ""}</span>
+            ${starsHTML(l.flat_rating, l.flat_reviews)}</div>
           <div class="tags">${(l.kind === "room" ? ["Room"] : ["Whole flat"]).concat(l.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div></div>`;
     },
     onTop: (l, el) => {
@@ -160,66 +185,67 @@ async function seekerDeck() {
         await q(sb.from("swipes").insert({ listing_id: l.id, seeker_id: p.id, by_role: "seeker", liked }));
         if (!liked) return;
         const m = await findMatch(l.id, p.id);
-        const first = (l.owner?.full_name || "The student").split(" ")[0];
+        const first = (l.owner_name || "The student").split(" ")[0];
         if (m) showMatch(m.id, `${first} wants to sublet to you`, `${l.title}. A chat is open with ${first}. Add the landlord when you're ready to agree.`);
         else toast(`Sent. You'll match if ${first} says yes too.`);
       } catch { /* shown */ }
     },
-    empty: () => `<div class="empty"><h3>You've seen every flat in ${esc(p.city || "your city")} for now</h3>
-      <p>New sublets appear as students confirm their exchange. Your saved flats are in your profile.</p>
-      <a class="btn" href="#/profile">See starred flats</a></div>`,
+    empty: () => `<div class="empty"><h3>You've seen every flat in the area for now</h3>
+      <p>New sublets appear as students confirm their exchange. Widening your preferences brings back more flats.</p>
+      <a class="btn" href="#/preferences">Edit preferences</a><a class="btn" href="#/profile">See starred flats</a></div>`,
   });
 }
 
-// ---------- Subletter: swipe the students who liked your flat ----------
+// ---------- Subletter: applicants ranked by compatibility ----------
 async function ownerDeck() {
   const p = state.profile;
-  const mine = await q(sb.from("listings").select("id, title, rent, lat, lng").eq("owner_id", p.id));
+  const mine = await q(sb.from("listings").select("id, title").eq("owner_id", p.id));
   if (!mine.length) {
     view().innerHTML = `<div class="empty"><span class="eyebrow">Subletter home</span><h3>List your flat to get started</h3>
       <p>Students arriving in your city will see it in their swipe deck. When one says yes, they appear here for you to accept or pass.</p>
       <a class="btn primary" href="#/list">List my flat</a></div>`;
     return;
   }
-  const ids = mine.map((l) => l.id);
-  const byId = Object.fromEntries(mine.map((l) => [l.id, l]));
-  const [likes, answered] = await Promise.all([
-    q(sb.from("swipes").select("listing_id, seeker_id, created_at, seeker:profiles!swipes_seeker_id_fkey(full_name, home_university, host_university, host_lat, host_lng, exchange_from, exchange_to, id_status, student_status)")
-      .in("listing_id", ids).eq("by_role", "seeker").eq("liked", true).order("created_at")),
-    q(sb.from("swipes").select("listing_id, seeker_id").in("listing_id", ids).eq("by_role", "owner")),
-  ]);
-  const doneKey = new Set(answered.map((a) => a.listing_id + a.seeker_id));
-  const items = likes.filter((l) => !doneKey.has(l.listing_id + l.seeker_id));
+  const items = (await q(sb.rpc("owner_applicants"))).map((a) => ({ ...a, id: a.listing_id + a.seeker_id }));
 
-  view().innerHTML = deckShell(`<span class="chip">Students who want <b>${mine.length === 1 ? esc(mine[0].title) : `your ${mine.length} flats`}</b></span>`,
-    "Drag right to accept and open a chat, left to pass.");
+  view().innerHTML = deckShell(`<span class="chip">Students who want <b>${mine.length === 1 ? esc(mine[0].title) : `your ${mine.length} flats`}</b></span>
+      <a class="chip" href="#/preferences" style="text-decoration:none">Ideal tenant ›</a>`,
+    "Best matches first. Drag right to accept and open a chat, left to pass.");
 
   mountDeck({
     items,
-    card: (s) => {
-      const st = s.seeker || {};
-      return `<div class="person-card">${avatar(st.full_name, s.seeker_id)}
-          <h2>${esc(st.full_name || "Student")}</h2>
-          <div class="checks" style="justify-content:center">${st.id_status === "verified" ? `<span class="pill ok">ID verified</span>` : `<span class="pill wait">ID ${esc(st.id_status)}</span>`}
-            ${st.student_status === "verified" ? `<span class="pill ok">Student verified</span>` : `<span class="pill wait">Student ${esc(st.student_status)}</span>`}</div>
+    card: (a) => {
+      const why = [];
+      why.push(a.cover_pct >= 95 ? "<b>uses your whole free period</b>" : `uses <b>${a.cover_pct}%</b> of your free period`);
+      if (a.minutes != null) why.push(`<b>${a.minutes} min</b> from your flat to their school`);
+      if (a.wanted_n) why.push(`<b>${a.lifestyle_hits}/${a.wanted_n}</b> of your ideal-tenant wishes`);
+      if (a.budget_max) why.push(a.budget_max >= a.rent ? "budget covers your rent" : `budget €${a.rent - a.budget_max} below your rent`);
+      return `<div class="person-card">${avatar(a.full_name, a.seeker_id)}
+          <span class="mscore" style="right:10px">${a.score}<small>% MATCH</small></span>
+          <h2>${esc(a.full_name || "Student")}</h2>
+          <div class="checks" style="justify-content:center">${a.id_status === "verified" ? `<span class="pill ok">ID verified</span>` : `<span class="pill wait">ID ${esc(a.id_status)}</span>`}
+            ${a.student_status === "verified" ? `<span class="pill ok">Student verified</span>` : `<span class="pill wait">Student ${esc(a.student_status)}</span>`}</div>
+          ${starsHTML(a.tenant_rating, a.tenant_reviews)}
           <span class="stamp like">YES</span><span class="stamp nope">PASS</span></div>
         <div class="info">
-          <div class="row"><span>${esc(st.home_university || "")}</span><span style="color:var(--muted)">→ ${esc(st.host_university || "")}</span></div>
-          ${st.exchange_from ? `<div class="row"><span class="dates">${fmtShort(st.exchange_from)} → ${fmtDate(st.exchange_to)}</span></div>` : ""}
-          ${(() => { const tr = travelTo(byId[s.listing_id] || {}, hostPlace(st)); return tr ? `<div class="commute">${ICON.train}<span><b>${tr.minutes} min</b> from your flat to their school by public transport</span></div>` : ""; })()}
-          <div class="host">Interested in <b>${esc(byId[s.listing_id]?.title)}</b></div></div>`;
+          ${a.meets_dates ? "" : `<span class="tierlabel">Shorter stay than you'd like</span>`}
+          <div class="row"><span>${esc(a.home_university || "")}</span><span style="color:var(--muted)">→ ${esc(a.host_university || "")}</span></div>
+          ${a.exchange_from ? `<div class="row"><span class="dates">${fmtShort(a.exchange_from)} → ${fmtDate(a.exchange_to)}</span></div>` : ""}
+          <div class="why">${why.join(" · ")}</div>
+          ${(a.lifestyle || []).length ? `<div class="tags">${a.lifestyle.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>` : ""}
+          <div class="host">Interested in <b>${esc(a.listing_title)}</b></div></div>`;
     },
-    onSwipe: async (s, liked) => {
+    onSwipe: async (a, liked) => {
       try {
-        await q(sb.from("swipes").insert({ listing_id: s.listing_id, seeker_id: s.seeker_id, by_role: "owner", liked }));
+        await q(sb.from("swipes").insert({ listing_id: a.listing_id, seeker_id: a.seeker_id, by_role: "owner", liked }));
         if (!liked) return;
-        const m = await findMatch(s.listing_id, s.seeker_id);
-        const first = (s.seeker?.full_name || "The student").split(" ")[0];
+        const m = await findMatch(a.listing_id, a.seeker_id);
+        const first = (a.full_name || "The student").split(" ")[0];
         if (m) showMatch(m.id, `You and ${first} matched`, `A chat is open with ${first}. Add your landlord when you're ready to agree on terms.`);
       } catch { /* shown */ }
     },
     empty: () => `<div class="empty"><h3>No new requests right now</h3>
-      <p>When a student says yes to your flat, they appear here. Check how demand looks in your profile.</p>
+      <p>When a student says yes to your flat, they appear here, best match first. Check how demand looks in your profile.</p>
       <a class="btn" href="#/profile">See demand for my flat</a></div>`,
   });
 }

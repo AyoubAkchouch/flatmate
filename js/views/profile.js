@@ -1,5 +1,5 @@
 // Profile: your details, your flats with the demand calculator, your starred flats.
-import { sb, state, view, go, esc, q, toast, fetchAll, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, priceSuggestion, fmtDate, fmtShort, loadProfile, photoUrl } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, demandData, priceSuggestion, starsHTML, fmtDate, fmtShort, loadProfile, photoUrl } from "../lib.js";
 import { ROLE_LABEL } from "./onboarding.js";
 import { schoolsNear } from "../schools.js";
 
@@ -16,21 +16,26 @@ export async function renderProfile() {
   const p = await loadProfile();
   const isLandlord = p.role === "landlord";
 
-  const [mine, starRows, statsRows, cityListings] = await Promise.all([
+  const [mine, starRows, aboutMe] = await Promise.all([
     isLandlord ? [] : q(sb.from("listings").select("*").eq("owner_id", p.id).order("created_at")),
     p.role === "seeker" ? q(sb.from("stars").select("listing_id, listing:listings(*)").eq("user_id", p.id).order("created_at", { ascending: false })) : [],
-    fetchAll(() => sb.rpc("listing_stats").order("listing_id")),
-    fetchAll(() => sb.from("listings").select("id, city, rent, size_m2").eq("active", true).order("id")),
+    q(sb.from("reviews").select("rating, comment, kind, created_at, listing_id, author:profiles!reviews_author_id_fkey(full_name)").eq("subject_id", p.id).order("created_at", { ascending: false }).limit(50)),
   ]);
-  const stats = Object.fromEntries(statsRows.map((r) => [r.listing_id, r]));
+  const ids = mine.map((l) => l.id).concat(starRows.map((r) => r.listing_id));
+  const [dd, flatReviews] = await Promise.all([
+    demandData(ids),
+    ids.length ? q(sb.from("reviews").select("listing_id, rating").eq("kind", "flat").in("listing_id", ids)) : [],
+  ]);
+  const flatRating = (id) => { const r = flatReviews.filter((x) => x.listing_id === id); return r.length ? [r.reduce((a, x) => a + x.rating, 0) / r.length, r.length] : [0, 0]; };
 
   const listingCard = (l) => {
-    const d = demandFor(l, stats, cityListings.concat(l.active ? [] : [l]));
+    const d = demandFor(l, dd.stat[l.id], dd.benchFor(l));
     const s = priceSuggestion(l, d);
     const label = { high: "High demand", low: "Low demand", normal: "Normal demand" }[d.level];
     const pos = Math.min(98, Math.max(2, (d.ratio / 2) * 100));
     return `<article class="listing">
       <div class="row"><strong>${esc(l.title)}</strong><span class="price">€${l.rent}<small> / month</small></span></div>
+      ${starsHTML(...flatRating(l.id))}
       <div class="stats"><span>${esc(l.area ? l.area + ", " : "")}${esc(l.city)}</span><span>${l.size_m2} m²</span><span>${fmtShort(l.available_from)} → ${fmtDate(l.available_to)}</span>
         ${l.active ? "" : `<span class="pill red">Paused</span>`}</div>
       ${l.active ? `
@@ -48,9 +53,9 @@ export async function renderProfile() {
 
   const starred = starRows.filter((r) => r.listing);
   const starRow = (r) => {
-    const l = r.listing, d = demandFor(l, stats, cityListings), tr = travelTo(l, hostPlace(p));
+    const l = r.listing, d = demandFor(l, dd.stat[l.id], dd.benchFor(l)), tr = travelTo(l, hostPlace(p));
     return `<div class="srow">${l.photos?.[0] ? `<img src="${esc(photoUrl(l.photos[0]))}" alt="" style="width:44px;height:44px;border-radius:8px;object-fit:cover">` : ""}
-      <span class="t"><strong>${esc(l.title)}</strong><span>€${l.rent}${tr ? ` · ${tr.minutes} min to ${esc(tr.uni)}` : ""}${l.active ? "" : " · no longer listed"}</span></span>
+      <span class="t"><strong>${esc(l.title)}</strong>${starsHTML(...flatRating(l.id))}<span style="display:block">€${l.rent}${tr ? ` · ${tr.minutes} min to ${esc(tr.uni)}` : ""}${l.active ? "" : " · no longer listed"}</span></span>
       ${d.level === "high" ? `<span class="pill red">High demand</span>` : d.level === "low" ? `<span class="pill gem">Hidden gem</span>` : ""}
       <button class="star on" data-unstar="${l.id}" aria-label="Remove star">${ICON.star}</button></div>`;
   };
@@ -66,11 +71,14 @@ export async function renderProfile() {
       <dt>City</dt><dd>${esc(p.city)}</dd>
       ${p.exchange_from ? `<dt>Exchange</dt><dd>${fmtDate(p.exchange_from)} → ${fmtDate(p.exchange_to)}</dd>` : ""}
     </dl>
+    ${p.role !== "landlord" ? `<a class="btn full" href="#/preferences" style="margin-top:14px">${p.role === "seeker" ? "Edit what you're looking for" : "Edit your ideal tenant and details"}</a>`
+      : `<a class="btn full" href="#/preferences" style="margin-top:14px">Edit your details</a>`}
     ${["failed", "none"].includes(p.id_status) || ["failed", "none"].includes(p.student_status) ? `<div class="banner" style="margin-top:14px">A check is missing or wasn't accepted. <button class="linkbtn" id="redo" style="padding:0">Do it again</button></div>` : ""}
     ${isLandlord ? `<section class="psec"><h3>My sublet requests</h3><p class="lead">They appear on your home screen when a tenant invites you from a chat.</p></section>`
       : `<section class="psec"><div class="psec-h"><h3>My flats to sublet</h3><a class="btn" href="#/list">+ Add a flat</a></div>
         ${mine.length ? mine.map(listingCard).join("") : `<p class="lead">Leaving your own flat empty during your exchange? List it and see how much demand there is.</p>`}</section>`}
     ${p.role === "seeker" ? `<section class="psec"><h3>Starred flats</h3>${starred.length ? starred.map(starRow).join("") : `<p class="lead">Tap the star on a flat while swiping to keep it here.</p>`}</section>` : ""}
+    ${reviewsSection(p, aboutMe)}
     <section class="psec">
       ${p.is_admin ? `<a class="btn" href="#/admin">Review verification checks</a>` : ""}
       <button class="btn" id="logout">Log out</button></section>
@@ -105,4 +113,17 @@ export async function renderProfile() {
     go("onboarding");
   };
   document.getElementById("logout").onclick = async () => { await sb.auth.signOut(); go("welcome"); };
+}
+
+// What others said: about you as a tenant, or about your flats.
+function reviewsSection(p, rows) {
+  if (p.role === "landlord") return "";
+  const title = p.role === "seeker" ? "Reviews from your hosts" : "Reviews of your flats";
+  if (!rows.length) return `<section class="psec"><h3>${title}</h3><p class="lead">${p.role === "seeker"
+    ? "After a sublet, the student you stayed with can rate you as a tenant. Good reviews move you up their list."
+    : "After a sublet, your tenant can rate your flat. Good reviews move it up in students' decks."}</p></section>`;
+  const avg = rows.reduce((a, r) => a + r.rating, 0) / rows.length;
+  return `<section class="psec"><div class="psec-h"><h3>${title}</h3>${starsHTML(avg, rows.length)}</div>
+    ${rows.slice(0, 6).map((r) => `<div class="review"><div class="row">${starsHTML(r.rating, 1).replace(/ <small>.*<\/small>/, "")}<small>${fmtDate(r.created_at)}</small></div>
+      ${r.comment ? `<p>${esc(r.comment)}</p>` : ""}<small>${esc(r.author?.full_name || "A student")}</small></div>`).join("")}</section>`;
 }

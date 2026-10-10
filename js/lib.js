@@ -156,30 +156,49 @@ export const distanceKm = km;
 export const hostPlace = (p) => (p && p.host_lat != null ? { lat: p.host_lat, lng: p.host_lng, name: p.host_university } : null);
 
 // ---------- Demand ----------
-// stats: { [listingId]: { views_7d, interested_7d } } from the listing_stats() database function.
-// peers: active listings in the same city.
-export function demandFor(listing, stats, peers) {
-  const s = stats[listing.id] || { views_7d: 0, interested_7d: 0 };
-  const same = peers.filter((p) => (p.city || "").trim().toLowerCase() === (listing.city || "").trim().toLowerCase());
-  const pool = same.length ? same : [listing];
-  const avgInterest = pool.reduce((a, p) => a + (stats[p.id]?.interested_7d || 0), 0) / pool.length;
-  const perM2 = pool.map((p) => p.rent / p.size_m2).sort((a, b) => a - b);
-  const medianPerM2 = perM2[Math.floor(perM2.length / 2)];
+// stat:  { views_7d, interested_7d } for this flat (from the listing_stats() database function).
+// bench: { flats, avg_interest, median_eur_m2 } for its city (from city_benchmarks()).
+export function demandFor(listing, stat, bench) {
+  const s = stat || { views_7d: 0, interested_7d: 0 };
+  const perM2 = listing.rent / listing.size_m2;
+  const median = bench && bench.median_eur_m2 ? Number(bench.median_eur_m2) : perM2;
+  const avg = bench ? Number(bench.avg_interest || 0) : 0;
   let ratio, basis, level;
-  if (avgInterest >= 2 && pool.length >= 3) {
+  if (bench && avg >= 2 && bench.flats >= 3) {
     basis = "interest";
-    ratio = s.interested_7d / avgInterest;
+    ratio = s.interested_7d / avg;
     level = ratio >= 1.4 ? "high" : ratio <= 0.6 ? "low" : "normal";
   } else {
     // Not enough activity yet: estimate from price. Cheaper than similar flats = more demand.
     basis = "price";
-    ratio = medianPerM2 / (listing.rent / listing.size_m2);
+    ratio = median / perM2;
     level = ratio >= 1.2 ? "high" : ratio <= 0.8 ? "low" : "normal";
   }
+  return { views: s.views_7d, interested: s.interested_7d, ratio, level, basis, peers: bench ? bench.flats : 1,
+    similarRent: Math.round((median * listing.size_m2) / 10) * 10 };
+}
+// Statistics and city benchmarks for a set of flats, as lookup tables.
+export async function demandData(ids) {
+  const [stats, bench] = await Promise.all([
+    ids.length ? q(sb.rpc("listing_stats", { ids })) : [],
+    q(sb.rpc("city_benchmarks")),
+  ]);
+  const byCity = Object.fromEntries(bench.map((b) => [b.city_key, b]));
   return {
-    views: s.views_7d, interested: s.interested_7d, ratio, level, basis, peers: pool.length,
-    similarRent: Math.round((medianPerM2 * listing.size_m2) / 10) * 10,
+    stat: Object.fromEntries(stats.map((r) => [r.listing_id, r])),
+    benchFor: (l) => byCity[(l.city || "").trim().toLowerCase()] || null,
   };
+}
+
+// ---------- Shared lists ----------
+export const FEATURES = ["Furnished", "Bills included", "Washing machine", "Wi-Fi", "Balcony", "Near public transport", "Bike storage", "Quiet street"];
+export const LIFESTYLE = ["Non-smoker", "Quiet", "Tidy", "Early riser", "Night owl", "Has a pet", "Often away at weekends"];
+
+// ★★★★☆ 4.2 (12)
+export function starsHTML(avg, n) {
+  if (!n) return "";
+  const full = Math.round(Number(avg));
+  return `<span class="rating" aria-label="Rated ${Number(avg).toFixed(1)} out of 5 from ${n} review${n > 1 ? "s" : ""}"><span aria-hidden="true">${"★".repeat(full)}${"☆".repeat(5 - full)}</span> ${Number(avg).toFixed(1)} <small>(${n})</small></span>`;
 }
 
 const round10 = (n) => Math.round(n / 10) * 10;

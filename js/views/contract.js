@@ -1,5 +1,5 @@
 // Contracts: list of agreements to sign, and the signing screen.
-import { sb, state, view, esc, q, toast, avatar, fmtDate, signaturePad } from "../lib.js";
+import { sb, state, view, esc, q, toast, avatar, fmtDate, signaturePad, starsHTML } from "../lib.js";
 
 // Placeholder templates for the hackathon. Not legal documents.
 export const TEMPLATES = {
@@ -45,6 +45,7 @@ export async function renderContract(id) {
   if (!m) { view().innerHTML = `<div class="empty"><h3>This contract isn't available</h3><a class="btn" href="#/contracts">All contracts</a></div>`; return; }
   let c = await q(sb.from("contracts").select("*").eq("match_id", id).single());
   let tpl = c.template;
+  let reviews = await q(sb.from("reviews").select("*").eq("match_id", id));
   const myRole = m.seeker_id === me ? "seeker" : m.owner_id === me ? "owner" : "landlord";
 
   const draw = () => {
@@ -76,6 +77,7 @@ export async function renderContract(id) {
         ${all ? `<span class="done">FULLY SIGNED</span>` : ""}</div>
       <div class="sigs">${sigRow("owner", "Tenant", m.owner)}${sigRow("seeker", "Subtenant", m.seeker)}${sigRow("landlord", "Landlord consent", m.landlord)}</div>
       ${all ? `<button class="btn primary full no-print" id="print" style="margin-top:14px">Save as PDF or print</button>` : ""}
+      ${m.status === "signed" && myRole !== "landlord" ? reviewBox() : ""}
     </div>`;
 
     view().querySelectorAll('input[name="tpl"]').forEach((r) => (r.onchange = () => { tpl = r.value; draw(); }));
@@ -95,6 +97,46 @@ export async function renderContract(id) {
     }
     const pr = document.getElementById("print");
     if (pr) pr.onclick = () => window.print();
+    wireReview();
+  };
+
+  // Reviews: the subtenant rates the flat, the tenant rates the subtenant.
+  const other = () => (myRole === "seeker" ? m.owner : m.seeker);
+  let pick = 0;
+  const reviewBox = () => {
+    const mine = reviews.find((r) => r.author_id === me);
+    const theirs = reviews.find((r) => r.author_id !== me);
+    pick = pick || mine?.rating || 0;
+    const what = myRole === "seeker" ? "the flat and your stay" : `${esc(other()?.full_name || "your tenant")} as a tenant`;
+    return `<section class="psec no-print"><h3>${mine ? "Your review" : `Rate ${what}`}</h3>
+      <div class="pref-sec">
+        <div class="starpick" role="radiogroup" aria-label="Rating">${[1, 2, 3, 4, 5].map((n) =>
+          `<button type="button" data-star="${n}" class="${n <= pick ? "on" : ""}" aria-label="${n} star${n > 1 ? "s" : ""}" aria-checked="${n === pick}" role="radio">★</button>`).join("")}</div>
+        <label class="field"><span>Comment <small style="font-weight:400;color:var(--muted)">(optional, shown on ${myRole === "seeker" ? "the flat" : "their profile"})</small></span>
+          <textarea id="rv-text" rows="3" maxlength="1000">${esc(mine?.comment || "")}</textarea></label>
+        <button class="btn primary" id="rv-save">${mine ? "Update review" : "Publish review"}</button>
+      </div>
+      ${theirs ? `<div class="review"><div class="row"><strong>${esc(other()?.full_name)} rated ${myRole === "seeker" ? "you as a tenant" : "your flat"}</strong>${starsHTML(theirs.rating, 1).replace(/ <small>.*<\/small>/, "")}</div>
+        ${theirs.comment ? `<p>${esc(theirs.comment)}</p>` : ""}</div>` : ""}
+    </section>`;
+  };
+  const wireReview = () => {
+    view().querySelectorAll("[data-star]").forEach((b) => b.onclick = () => {
+      pick = +b.dataset.star;
+      view().querySelectorAll("[data-star]").forEach((x) => { x.classList.toggle("on", +x.dataset.star <= pick); x.setAttribute("aria-checked", +x.dataset.star === pick); });
+    });
+    const save = document.getElementById("rv-save");
+    if (!save) return;
+    save.onclick = async () => {
+      if (!pick) { toast("Choose between 1 and 5 stars.", "err"); return; }
+      save.disabled = true;
+      try {
+        await q(sb.rpc("submit_review", { m: m.id, stars: pick, note: document.getElementById("rv-text").value }));
+        reviews = await q(sb.from("reviews").select("*").eq("match_id", id));
+        toast("Thanks, your review is published.");
+        draw();
+      } catch { save.disabled = false; }
+    };
   };
 
   const reload = async () => {

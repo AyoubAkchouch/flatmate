@@ -55,7 +55,10 @@ create temp table syn_words as select
  array['Sorbonne Université','Sciences Po','Université Paris Cité','Université Paris 1 Panthéon-Sorbonne','Université Paris Dauphine-PSL','Université Paris Nanterre','Université Paris 8','ESSEC','Université Paris-Saclay']::text[] as fr_unis,
  array['McGill University','Universidad de Buenos Aires','University of Lagos','Humboldt-Universität zu Berlin','Università di Bologna','Yonsei University','University of Toronto','Universidad Nacional Autónoma de México','University of Delhi','University of Melbourne','Universidade de São Paulo','KU Leuven','Universitat de Barcelona','University of Cape Town','Kyoto University','Uppsala University','Jagiellonian University','University of Edinburgh','Universidad de los Andes','American University of Beirut']::text[] as int_unis,
  array['Furnished','Bills included','Washing machine','Wi-Fi','Balcony','Near public transport','Bike storage','Quiet street']::text[] as tags,
- array['Bright','Cosy','Quiet','Sunny','Renovated','Charming','Calm','Spacious','Modern','Top-floor']::text[] as adj;
+ array['Bright','Cosy','Quiet','Sunny','Renovated','Charming','Calm','Spacious','Modern','Top-floor']::text[] as adj,
+ array['Non-smoker','Quiet','Tidy','Early riser','Night owl','Has a pet','Often away at weekends']::text[] as lifestyles,
+ array['Great location, exactly as described.','Quiet and clean, the host was very helpful.','A bit small but perfect for a semester.','Noisy street at night, otherwise fine.','Lovely flat, I would stay again.','Heating was weak in January.','Very well equipped kitchen.']::text[] as flat_notes,
+ array['Left the flat spotless.','Paid on time, easy to deal with.','Very respectful of the neighbours.','Some damage to a chair, sorted out quickly.','Friendly and reliable tenant.']::text[] as tenant_notes;
 
 create function pg_temp.pick(a text[]) returns text language sql volatile as $$ select a[1 + floor(random() * array_length(a, 1))::int] $$;
 -- Semester dates: most exchanges are spring 2027, some full year or summer.
@@ -87,7 +90,8 @@ select '00000000-0000-0000-0000-000000000000', id, 'authenticated', 'authenticat
 from syn_owners;
 
 update public.profiles p set role = 'subletter', full_name = o.full_name, home_university = o.uni, host_university = o.dest,
-  city = o.city, exchange_from = o.d_from, exchange_to = o.d_to, id_status = 'verified', student_status = 'verified', onboarded = true
+  city = o.city, exchange_from = o.d_from, exchange_to = o.d_to, id_status = 'verified', student_status = 'verified', onboarded = true,
+  wanted_lifestyle = coalesce((select array_agg(t) from unnest(array['Non-smoker','Quiet','Tidy']) t where random() < 0.4 + o.g * 0), '{}')
 from syn_owners o where p.id = o.id;
 
 insert into public.listings (owner_id, kind, title, city, area, address, lat, lng, available_from, available_to,
@@ -128,8 +132,13 @@ from syn_seekers;
 
 update public.profiles p set role = 'seeker', full_name = s.full_name, home_university = s.uni, host_university = s.school,
   host_lat = s.lat, host_lng = s.lng, city = s.city, exchange_from = s.d_from, exchange_to = s.d_to,
-  id_status = 'verified', student_status = 'verified', onboarded = true
-from syn_seekers s where p.id = s.id;
+  id_status = 'verified', student_status = 'verified', onboarded = true,
+  budget_max = s.budget, kind_pref = (array['any','any','whole','room'])[1 + floor(random() * 4)::int + s.g * 0],
+  max_commute = (array[30,45,45,60])[1 + floor(random() * 4)::int],
+  must_haves = case when random() < 0.5 then '{Furnished}'::text[] else '{}' end,
+  nice_to_haves = coalesce((select array_agg(t) from unnest(array['Wi-Fi','Washing machine','Balcony','Bills included']) t where random() < 0.4 + s.g * 0), '{}'),
+  lifestyle = coalesce((select array_agg(t) from unnest(w.lifestyles) t where random() < 0.3 + s.g * 0), '{}')
+from syn_seekers s, syn_words w where p.id = s.id;
 
 analyze syn_seekers; analyze public.listings;
 
@@ -158,10 +167,32 @@ from syn_seen where rk <= 10;
 insert into public.stars (user_id, listing_id, created_at)
 select seeker_id, listing_id, now() - random() * interval '7 days' from syn_seen where rk <= 2 and random() < 0.5;
 
+-- ---------- Past sublets with reviews both ways (about 40% of flats) ----------
+create temp table syn_past as
+select gen_random_uuid() as match_id, l.id as listing_id, l.owner_id,
+  (select s.id from syn_seekers s order by random() + l.size_m2 * 0 limit 1) as seeker_id,
+  random() as r1, random() as r2
+from public.listings l
+where l.owner_id in (select id from syn_owners) and random() < 0.4;
+insert into public.matches (id, listing_id, seeker_id, owner_id, status, created_at)
+select match_id, listing_id, seeker_id, owner_id, 'signed', now() - interval '200 days' from syn_past
+on conflict do nothing;
+insert into public.reviews (match_id, listing_id, author_id, subject_id, kind, rating, comment, created_at)
+select p.match_id, p.listing_id, p.seeker_id, p.owner_id, 'flat',
+  case when p.r1 < 0.08 then 2 when p.r1 < 0.25 then 3 when p.r1 < 0.6 then 4 else 5 end,
+  pg_temp.pick(w.flat_notes), now() - interval '30 days' * p.r2
+from syn_past p, syn_words w where exists (select 1 from public.matches m where m.id = p.match_id);
+insert into public.reviews (match_id, listing_id, author_id, subject_id, kind, rating, comment, created_at)
+select p.match_id, p.listing_id, p.owner_id, p.seeker_id, 'tenant',
+  case when p.r2 < 0.06 then 2 when p.r2 < 0.2 then 3 when p.r2 < 0.55 then 4 else 5 end,
+  pg_temp.pick(w.tenant_notes), now() - interval '30 days' * p.r1
+from syn_past p, syn_words w where exists (select 1 from public.matches m where m.id = p.match_id);
+
 -- A third of the fake flats say yes back automatically, so a real student can get a match on stage.
 -- (Set after the activity above, so fake students don't create thousands of matches.)
 update public.listings set demo_auto_match = (random() < 0.33)
 where owner_id in (select id from syn_owners);
 
 select (select count(*) from syn_owners) as fake_flats, (select count(*) from syn_seekers) as fake_students,
+  (select count(*) from public.reviews r where r.author_id in (select id from syn_owners union select id from syn_seekers)) as reviews,
   (select count(*) from syn_seen) as views, (select count(*) from syn_seen where rk <= 10) as swipes;

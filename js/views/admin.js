@@ -31,6 +31,13 @@ export async function renderAdmin() {
         : "New documents wait here until you approve or reject them."}</span>
       <div class="btns"><button class="btn" id="toggle">${settings.auto_approve_checks ? "Switch to manual review" : "Switch to demo mode"}</button></div>
     </div>
+    <div class="review" style="margin-top:10px">
+      <strong>${settings.allow_early_reviews ? "Reviews allowed as soon as a contract is signed" : "Reviews only after move-out"}</strong>
+      <span style="font-size:14px;color:var(--muted)">${settings.allow_early_reviews
+        ? "Handy for the demo. For real use, students should only review once the stay is over."
+        : "Students can review each other once the sublet's end date has passed."}</span>
+      <div class="btns"><button class="btn" id="toggle-rev">${settings.allow_early_reviews ? "Only after move-out" : "Allow right after signing"}</button></div>
+    </div>
     <section class="psec"><h3>Waiting for review (${pending.length})</h3>
       ${pending.length ? pending.map((r) => `<div class="review">
         <div class="host">${avatar(r.user?.full_name, r.user_id)}<span><b>${esc(r.user?.full_name)}</b> · ${esc(r.user?.email)}<br>${kindLabel(r.kind)}${r.document_type ? ` · ${esc(r.document_type.replace("_", " "))}` : ""} · ${fmtDate(r.created_at)}</span></div>
@@ -46,6 +53,10 @@ export async function renderAdmin() {
 
   document.getElementById("toggle").onclick = async () => {
     await q(sb.rpc("set_auto_approve", { on_off: !settings.auto_approve_checks }));
+    renderAdmin();
+  };
+  document.getElementById("toggle-rev").onclick = async () => {
+    await q(sb.rpc("set_early_reviews", { on_off: !settings.allow_early_reviews }));
     renderAdmin();
   };
   const decide = (approve) => async (e) => {
