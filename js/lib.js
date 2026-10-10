@@ -114,7 +114,7 @@ export function storageSafeName(file) {
 }
 
 // ---------- Address → coordinates ----------
-// French addresses use the national geocoder (IGN Géoplateforme); others fall back to OpenStreetMap.
+// French addresses use the national geocoder (IGN Géoplateforme); others use OpenStreetMap data (Photon, then Nominatim).
 export async function geocode(address, city) {
   const text = [address, city].filter(Boolean).join(", ");
   if (!text) return null;
@@ -126,6 +126,14 @@ export async function geocode(address, city) {
       if (f && f.properties && f.properties.score > 0.5) {
         return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], label: f.properties.label };
       }
+    }
+  } catch (e) { /* try the next service */ }
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=1`);
+    if (r.ok) {
+      const j = await r.json();
+      const f = j.features && j.features[0];
+      if (f) return { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], label: f.properties.name || text };
     }
   } catch (e) { /* try the next service */ }
   try {

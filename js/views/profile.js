@@ -21,6 +21,9 @@ export async function renderProfile() {
     p.role === "seeker" ? q(sb.from("stars").select("listing_id, listing:listings(*)").eq("user_id", p.id).order("created_at", { ascending: false })) : [],
     q(sb.from("reviews").select("rating, comment, kind, created_at, listing_id, author:profiles!reviews_author_id_fkey(full_name)").eq("subject_id", p.id).order("created_at", { ascending: false }).limit(50)),
   ]);
+  // Seekers who also list a flat can switch between the two sides.
+  const dual = p.role === "seeker" && mine.length > 0;
+  const mode = p.role === "subletter" ? "provider" : p.role === "seeker" ? (dual && p.view_mode === "provider" ? "provider" : "seeker") : "landlord";
   const ids = mine.map((l) => l.id).concat(starRows.map((r) => r.listing_id));
   const [dd, flatReviews] = await Promise.all([
     demandData(ids),
@@ -62,7 +65,7 @@ export async function renderProfile() {
 
   view().innerHTML = `<div>
     <div class="idcard">${avatar(p.full_name, p.id)}
-      <span><b>${esc(p.full_name)}</b><br><span style="color:var(--muted);font-size:13px">${ROLE_LABEL[p.role] || ""}</span>
+      <span><b>${esc(p.full_name)}</b><br><span style="color:var(--muted);font-size:13px">${dual ? "Looking for a flat · subletting their own" : ROLE_LABEL[p.role] || ""}</span>
       <span class="checks">${STATUS[p.id_status]("ID")}${STATUS[p.student_status]("Student")}</span></span></div>
     <dl class="pdl">
       <dt>Email</dt><dd>${esc(p.email)}</dd>
@@ -71,14 +74,20 @@ export async function renderProfile() {
       <dt>City</dt><dd>${esc(p.city)}</dd>
       ${p.exchange_from ? `<dt>Exchange</dt><dd>${fmtDate(p.exchange_from)} → ${fmtDate(p.exchange_to)}</dd>` : ""}
     </dl>
-    ${p.role !== "landlord" ? `<a class="btn full" href="#/preferences" style="margin-top:14px">${p.role === "seeker" ? "Edit what you're looking for" : "Edit your ideal tenant and details"}</a>`
+    ${dual ? `<div class="pref-sec" style="margin-top:14px"><h3>You're using the app as</h3>
+      <div class="seg" role="group" aria-label="Switch view">
+        <button type="button" data-view="seeker" aria-pressed="${mode === "seeker"}">Looking for a flat</button>
+        <button type="button" data-view="provider" aria-pressed="${mode === "provider"}">Subletting my flat</button></div>
+      <small style="color:var(--muted);font-size:12px">${mode === "seeker" ? "Discover shows flats ranked for you." : "Discover shows the students who want your flat."}</small></div>` : ""}
+    ${p.role !== "landlord" ? `<a class="btn full" href="#/preferences" style="margin-top:14px">${mode === "seeker" ? "Edit what you're looking for" : "Edit your ideal tenant and details"}</a>`
       : `<a class="btn full" href="#/preferences" style="margin-top:14px">Edit your details</a>`}
     ${["failed", "none"].includes(p.id_status) || ["failed", "none"].includes(p.student_status) ? `<div class="banner" style="margin-top:14px">A check is missing or wasn't accepted. <button class="linkbtn" id="redo" style="padding:0">Do it again</button></div>` : ""}
     ${isLandlord ? `<section class="psec"><h3>My sublet requests</h3><p class="lead">They appear on your home screen when a tenant invites you from a chat.</p></section>`
+      : dual && mode === "seeker" ? ""
       : `<section class="psec"><div class="psec-h"><h3>My flats to sublet</h3><a class="btn" href="#/list">+ Add a flat</a></div>
         ${mine.length ? mine.map(listingCard).join("") : `<p class="lead">Leaving your own flat empty during your exchange? List it and see how much demand there is.</p>`}</section>`}
-    ${p.role === "seeker" ? `<section class="psec"><h3>Starred flats</h3>${starred.length ? starred.map(starRow).join("") : `<p class="lead">Tap the star on a flat while swiping to keep it here.</p>`}</section>` : ""}
-    ${reviewsSection(p, aboutMe)}
+    ${mode === "seeker" ? `<section class="psec"><h3>Starred flats</h3>${starred.length ? starred.map(starRow).join("") : `<p class="lead">Tap the star on a flat while swiping to keep it here.</p>`}</section>` : ""}
+    ${reviewsSection(p, aboutMe, mode)}
     <section class="psec">
       ${p.is_admin ? `<a class="btn" href="#/admin">Review verification checks</a>` : ""}
       <button class="btn" id="logout">Log out</button></section>
@@ -112,14 +121,21 @@ export async function renderProfile() {
     await loadProfile();
     go("onboarding");
   };
+  view().querySelectorAll("[data-view]").forEach((b) => (b.onclick = async () => {
+    if (b.dataset.view === mode) return;
+    await q(sb.from("profiles").update({ view_mode: b.dataset.view }).eq("id", p.id));
+    toast(b.dataset.view === "provider" ? "Switched to subletting your flat." : "Switched to looking for a flat.");
+    renderProfile();
+  }));
   document.getElementById("logout").onclick = async () => { await sb.auth.signOut(); go("welcome"); };
 }
 
 // What others said: about you as a tenant, or about your flats.
-function reviewsSection(p, rows) {
-  if (p.role === "landlord") return "";
-  const title = p.role === "seeker" ? "Reviews from your hosts" : "Reviews of your flats";
-  if (!rows.length) return `<section class="psec"><h3>${title}</h3><p class="lead">${p.role === "seeker"
+function reviewsSection(p, all, mode) {
+  if (mode === "landlord") return "";
+  const rows = all.filter((r) => r.kind === (mode === "seeker" ? "tenant" : "flat"));
+  const title = mode === "seeker" ? "Reviews from your hosts" : "Reviews of your flats";
+  if (!rows.length) return `<section class="psec"><h3>${title}</h3><p class="lead">${mode === "seeker"
     ? "After a sublet, the student you stayed with can rate you as a tenant. Good reviews move you up their list."
     : "After a sublet, your tenant can rate your flat. Good reviews move it up in students' decks."}</p></section>`;
   const avg = rows.reduce((a, r) => a + r.rating, 0) / rows.length;

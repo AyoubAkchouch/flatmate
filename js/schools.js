@@ -3,11 +3,13 @@
 //    with the GPS position of their main site. Updated by the ministry; no key needed.
 //  • Universities worldwide from the Research Organization Registry (ror.org), for home universities
 //    and for French schools the ministry list doesn't include (many private schools).
-//  • Addresses in France from the national geocoder (IGN Géoplateforme), to pin an exact campus.
+//  • Addresses: the French national geocoder (IGN Géoplateforme) for France, and Photon
+//    (photon.komoot.io, OpenStreetMap data) everywhere else, to pin a flat or a campus.
 
 const MINISTRY = "https://data.enseignementsup-recherche.gouv.fr/api/explore/v2.1/catalog/datasets/fr-esr-principaux-etablissements-enseignement-superieur/records";
 const ROR = "https://api.ror.org/v2/organizations";
 const GEO = "https://data.geopf.fr/geocodage/search";
+const PHOTON = "https://photon.komoot.io/api/";
 const enc = encodeURIComponent;
 const quote = (s) => String(s).replace(/["\\]/g, " ").trim();
 
@@ -28,14 +30,15 @@ export async function searchHomeUniversities(text) {
   });
 }
 
-// Destination school in France: the ministry list first, then the worldwide registry for the rest.
-export async function searchFrenchSchools(text) {
+// Destination school: French institutions from the ministry list first (with a GPS position),
+// then universities anywhere from the worldwide registry (those need a campus address).
+export async function searchDestinationSchools(text) {
   const t = quote(text);
   if (t.length < 2) return [];
   const where = `search(uo_lib, "${t}") or search(sigle, "${t}") or search(nom_court, "${t}")`;
   const [ministry, ror] = await Promise.all([
     getJSON(`${MINISTRY}?limit=8&select=uo_lib,sigle,com_nom,coordonnees,identifiant_ror&where=${enc(where)}`).catch(() => ({ results: [] })),
-    getJSON(`${ROR}?query=${enc(t)}&filter=types:education,locations.geonames_details.country_code:FR`).catch(() => ({ items: [] })),
+    getJSON(`${ROR}?query=${enc(t)}&filter=types:education`).catch(() => ({ items: [] })),
   ]);
   const out = (ministry.results || []).map((r) => ({
     name: r.uo_lib, detail: r.com_nom || "", source: "ministry",
@@ -43,12 +46,12 @@ export async function searchFrenchSchools(text) {
     ror: (r.identifiant_ror || [])[0] || null,
   }));
   const known = new Set(out.map((o) => o.ror).filter(Boolean));
-  for (const i of (ror.items || []).slice(0, 6)) {
+  for (const i of (ror.items || []).slice(0, 8)) {
     const id = i.id.replace("https://ror.org/", "");
     if (known.has(id)) continue;
     const g = i.locations?.[0]?.geonames_details || {};
     // The registry only knows the city, so these schools need a campus address for travel times.
-    out.push({ name: rorName(i), detail: g.name || "", source: "registry", lat: null, lng: null, ror: id });
+    out.push({ name: rorName(i), detail: [g.name, g.country_name].filter(Boolean).join(", "), source: "registry", lat: null, lng: null, ror: id, city: g.name || null });
   }
   return out.slice(0, 10);
 }
@@ -61,11 +64,26 @@ export async function schoolsNear(lat, lng, km = 4, limit = 5) {
   return (j.results || []).map((r) => ({ name: r.uo_lib, lat: r.coordonnees.lat, lng: r.coordonnees.lon }));
 }
 
-// Address search in France, for pinning a campus or a flat.
+// Address search anywhere: the French geocoder for French addresses, Photon for the rest.
 export async function searchAddresses(text) {
   if (text.trim().length < 3) return [];
-  const j = await getJSON(`${GEO}?q=${enc(text)}&autocomplete=1&limit=6`);
-  return (j.features || []).map((f) => ({ name: f.properties.label, detail: f.properties.context || "", lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] }));
+  const [fr, world] = await Promise.all([
+    getJSON(`${GEO}?q=${enc(text)}&autocomplete=1&limit=5`).catch(() => ({ features: [] })),
+    getJSON(`${PHOTON}?q=${enc(text)}&limit=6&lang=en`).catch(() => ({ features: [] })),
+  ]);
+  const out = (fr.features || []).filter((f) => f.properties.score > 0.55).map((f) => ({
+    name: f.properties.label, detail: f.properties.context || "France", city: f.properties.city || null,
+    lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] }));
+  const near = (a, b) => Math.abs(a.lat - b.lat) < 0.0005 && Math.abs(a.lng - b.lng) < 0.0005;
+  for (const f of world.features || []) {
+    const p = f.properties;
+    const street = [p.housenumber, p.street].filter(Boolean).join(" ");
+    const place = { name: [street || p.name, [p.postcode, p.city || p.town || p.village].filter(Boolean).join(" ")].filter(Boolean).join(", "),
+      detail: [p.state, p.country].filter(Boolean).join(", "), city: p.city || p.town || p.village || null,
+      lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] };
+    if (place.name && !out.some((o) => near(o, place))) out.push(place);
+  }
+  return out.slice(0, 8);
 }
 
 // A text box with live suggestions. onPick(item) is called when a suggestion is chosen.

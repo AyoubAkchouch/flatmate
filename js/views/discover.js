@@ -6,7 +6,7 @@ const loading = `<p class="loading">Loading…</p>`;
 export async function renderDiscover() {
   view().innerHTML = loading;
   const role = state.profile.role;
-  if (role === "seeker") return seekerDeck();
+  if (role === "seeker") return state.profile.view_mode === "provider" ? ownerDeck() : seekerDeck();
   if (role === "subletter") return ownerDeck();
   return landlordHome();
 }
@@ -209,7 +209,8 @@ async function ownerDeck() {
   const items = (await q(sb.rpc("owner_applicants"))).map((a) => ({ ...a, id: a.listing_id + a.seeker_id }));
 
   view().innerHTML = deckShell(`<span class="chip">Students who want <b>${mine.length === 1 ? esc(mine[0].title) : `your ${mine.length} flats`}</b></span>
-      <a class="chip" href="#/preferences" style="text-decoration:none">Ideal tenant ›</a>`,
+      <a class="chip" href="#/preferences" style="text-decoration:none">Ideal tenant ›</a>
+      ${p.role === "seeker" ? `<a class="chip" href="#/profile" style="text-decoration:none">Switch to looking for a flat ›</a>` : ""}`,
     "Best matches first. Drag right to accept and open a chat, left to pass.");
 
   mountDeck({

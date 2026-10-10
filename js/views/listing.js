@@ -1,5 +1,5 @@
 // Add or edit a flat to sublet. #/list = new flat, #/list/<id> = edit.
-import { sb, state, view, go, esc, q, toast, FEATURES, ICON, geocode, photoUrl, storageSafeName } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, loadProfile, FEATURES, ICON, geocode, photoUrl, storageSafeName } from "../lib.js";
 import { searchAddresses, autocomplete } from "../schools.js";
 
 const TAGS = FEATURES;
@@ -19,7 +19,7 @@ export async function renderListingForm(id) {
 
   view().innerHTML = `<div class="ob">
     <a class="back" href="#/${l ? "profile" : "discover"}">‹ Cancel</a>
-    <h2>${l ? "Edit your flat" : "Sublet your flat while you're away"}</h2>
+    <h2>${l ? "Edit your flat" : p.role === "seeker" ? `Sublet your flat${p.home_city ? ` in ${esc(p.home_city)}` : " back home"} while you're away` : "Sublet your flat while you're away"}</h2>
     ${l ? "" : `<p class="lead">Students arriving in your city will see it in their swipe deck. We filled in what we already know from your profile.</p>`}
     <form class="form" id="lf" novalidate>
       <div class="tabs2" role="group" aria-label="What you're subletting">
@@ -30,9 +30,9 @@ export async function renderListingForm(id) {
         <div class="thumbs" id="thumbs"></div>
         <label class="upload" for="l-photos" style="min-height:80px">${ICON.photo}<strong>Add photos</strong><small>The first photo is the one students see first</small>
           <input type="file" id="l-photos" accept="image/*" multiple></label></div>
-      <div class="field"><span>Street address</span><input id="l-address" value="${val("address")}" placeholder="Start typing, e.g. 12 rue Oberkampf Paris">
+      <div class="field"><span>Street address</span><input id="l-address" value="${val("address")}" placeholder="Start typing the street and city">
         <small>Used to work out travel times to nearby schools and to each student's campus. Students only see the neighbourhood.</small></div>
-      <div class="two"><label class="field"><span>City</span><input id="l-city" value="${val("city", p.role === "subletter" ? p.city || "" : "")}"></label>
+      <div class="two"><label class="field"><span>City</span><input id="l-city" value="${val("city", p.role === "subletter" ? p.city || "" : p.home_city || "")}"></label>
         <label class="field"><span>Neighbourhood</span><input id="l-area" value="${val("area")}" placeholder="e.g. 11e · Oberkampf"></label></div>
       <div class="two"><label class="field"><span>Free from ${l ? "" : `<span class="auto">Your exchange</span>`}</span><input id="l-from" type="date" value="${val("available_from", p.exchange_from || "")}"></label>
         <label class="field"><span>Until</span><input id="l-to" type="date" value="${val("available_to", p.exchange_to || "")}"></label></div>
@@ -111,7 +111,12 @@ export async function renderListingForm(id) {
       data.photos = keptPhotos.concat(uploaded);
       if (l) await q(sb.from("listings").update(data).eq("id", l.id));
       else await q(sb.from("listings").insert({ ...data, owner_id: p.id }));
-      toast(l ? "Changes saved." : "Your flat is live. Here's how demand looks.");
+      if (!l && p.role === "seeker") {
+        // A seeker who lists their own flat now has two sides: show the provider one first.
+        await q(sb.from("profiles").update({ view_mode: "provider" }).eq("id", p.id));
+        await loadProfile();
+        toast("Your flat is live. Switch between looking for a flat and subletting yours from your profile.");
+      } else toast(l ? "Changes saved." : "Your flat is live. Here's how demand looks.");
       go("profile");
     } catch {
       btn.disabled = false; btn.textContent = l ? "Save changes" : "Publish listing";

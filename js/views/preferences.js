@@ -1,6 +1,6 @@
 // Preferences: what a seeker looks for, who a subletter wants to sublet to. Editable any time.
 import { sb, state, view, go, esc, q, toast, loadProfile, FEATURES, LIFESTYLE, ICON } from "../lib.js";
-import { searchFrenchSchools, searchAddresses, autocomplete } from "../schools.js";
+import { searchDestinationSchools, searchAddresses, autocomplete } from "../schools.js";
 
 export async function renderPreferences() {
   const p = await loadProfile();
@@ -13,7 +13,9 @@ export async function renderPreferences() {
     host: p.host_university ? { name: p.host_university, lat: p.host_lat, lng: p.host_lng } : null,
     campus: p.host_campus ? { name: p.host_campus, lat: p.host_lat, lng: p.host_lng } : null,
   };
-  const seeker = p.role === "seeker", subletter = p.role === "subletter", student = p.role !== "landlord";
+  // Seekers in "subletting my flat" view edit their ideal tenant instead of their flat search.
+  const provider = p.role === "subletter" || (p.role === "seeker" && p.view_mode === "provider");
+  const seeker = p.role === "seeker" && !provider, subletter = provider, student = p.role !== "landlord";
 
   const chips = (key, list, other = null) => `<div class="checkchips" data-chips="${key}">${list.map((t) =>
     `<label><input type="checkbox" value="${esc(t)}" ${d[key].includes(t) ? "checked" : ""} ${other && d[other].includes(t) ? "disabled" : ""}>${esc(t)}</label>`).join("")}</div>`;
@@ -27,8 +29,8 @@ export async function renderPreferences() {
     <form class="form" id="pf" novalidate>
       <section class="pref-sec"><h3>About you</h3>
         <label class="field"><span>Full name</span><input id="p-name" value="${esc(d.full_name)}"></label>
-        ${student ? `<div class="two"><label class="field"><span>${seeker ? "Arriving" : "Leaving"}</span><input id="p-from" type="date" value="${esc(d.exchange_from)}"></label>
-          <label class="field"><span>${seeker ? "Leaving" : "Back"}</span><input id="p-to" type="date" value="${esc(d.exchange_to)}"></label></div>`
+        ${student ? `<div class="two"><label class="field"><span>${p.role === "seeker" ? "Arriving" : "Leaving"}</span><input id="p-from" type="date" value="${esc(d.exchange_from)}"></label>
+          <label class="field"><span>${p.role === "seeker" ? "Leaving" : "Back"}</span><input id="p-to" type="date" value="${esc(d.exchange_to)}"></label></div>`
           : `<label class="field"><span>Phone</span><input id="p-phone" value="${esc(d.phone)}"></label>`}
         <label class="field"><span>City</span><input id="p-city" value="${esc(d.city)}"></label>
       </section>
@@ -76,7 +78,7 @@ export async function renderPreferences() {
     if (other) view().querySelectorAll(`[data-chips="${other}"] input`).forEach((i) => { i.disabled = d[key].includes(i.value); });
   }));
   if (seeker) {
-    autocomplete(document.getElementById("p-host"), searchFrenchSchools, (it) => { d.host = it; d.campus = null; document.getElementById("p-campus").value = ""; });
+    autocomplete(document.getElementById("p-host"), searchDestinationSchools, (it) => { d.host = it; d.campus = null; document.getElementById("p-campus").value = ""; });
     autocomplete(document.getElementById("p-campus"), searchAddresses, (it) => { d.campus = it; });
   }
 

@@ -1,6 +1,6 @@
 // Sign-up steps: role → details → identity check → student check → done.
 import { sb, state, view, go, esc, q, toast, invite, ICON, loadProfile, storageSafeName, fmtDate } from "../lib.js";
-import { searchHomeUniversities, searchFrenchSchools, searchAddresses, autocomplete } from "../schools.js";
+import { searchHomeUniversities, searchDestinationSchools, searchAddresses, autocomplete } from "../schools.js";
 
 const ROLES = {
   seeker: { title: "I'm looking for a flat", d: "You're arriving somewhere on an exchange.", student: true,
@@ -12,10 +12,11 @@ const ROLES = {
 };
 export const ROLE_LABEL = { seeker: "Looking for a flat", subletter: "Subletting a flat", landlord: "Landlord" };
 
-const LABEL = { role: "Your role", details: "About you", identity: "Identity check", student: "Student status", done: "Ready" };
+const LABEL = { role: "Your role", details: "About you", identity: "Identity check", student: "Student status", ownflat: "Your own flat", done: "Ready" };
 let ob = null; // the draft while onboarding
 
-const stepsFor = (role) => ["role", "details", "identity"].concat(role === "landlord" ? [] : ["student"]).concat(["done"]);
+const stepsFor = (role) => ["role", "details", "identity"].concat(role === "landlord" ? [] : ["student"])
+  .concat(role === "seeker" ? ["ownflat"] : []).concat(["done"]);
 
 function stepper() {
   const s = stepsFor(ob.role), i = s.indexOf(ob.step);
@@ -33,20 +34,21 @@ export function renderOnboarding() {
       userId: p.id,
       step: !p.role ? "role" : !p.full_name ? "details"
         : ["none", "failed"].includes(p.id_status) ? "identity"
-        : p.role !== "landlord" && ["none", "failed"].includes(p.student_status) ? "student" : "done",
+        : p.role !== "landlord" && ["none", "failed"].includes(p.student_status) ? "student"
+        : p.role === "seeker" ? "ownflat" : "done",
       role: p.role || (invite.get() ? "landlord" : null),
-      name: p.full_name || "", uni: p.home_university || "", uniRor: p.home_university_ror || null,
+      name: p.full_name || "", uni: p.home_university || "", uniRor: p.home_university_ror || null, homeCity: p.home_city || null,
       host: p.host_university ? { name: p.host_university, lat: p.host_lat, lng: p.host_lng } : null,
       campus: p.host_campus ? { name: p.host_campus, lat: p.host_lat, lng: p.host_lng } : null, otherCampus: !!p.host_campus,
       city: p.city || "Paris", from: p.exchange_from || "", to: p.exchange_to || "", phone: p.phone || "",
-      doc: "passport", docFile: null, selfie: null, cert: null, busy: false, err: "",
+      ownFlat: null, doc: "passport", docFile: null, selfie: null, cert: null, busy: false, err: "",
     };
   }
   draw();
 }
 
 function draw() {
-  ({ role: stepRole, details: stepDetails, identity: stepIdentity, student: stepStudent, done: stepDone })[ob.step]();
+  ({ role: stepRole, details: stepDetails, identity: stepIdentity, student: stepStudent, ownflat: stepOwnFlat, done: stepDone })[ob.step]();
 }
 
 function stepRole() {
@@ -78,8 +80,8 @@ function stepDetails() {
         : `<label class="field"><span>Phone</span><input id="d-phone" value="${esc(ob.phone)}" autocomplete="tel"></label>`}
       <label class="field"><span>${cityLabel}</span><input id="d-city" value="${esc(ob.city)}"></label>
       ${ob.role === "seeker" ? `<div class="field"><span>School you're going to</span>
-          <input id="d-host" value="${esc(ob.host?.name || "")}" placeholder="Start typing, e.g. Sorbonne Université">
-          <small>Schools recognised by the French higher-education ministry. Each flat shows its travel time to your campus.</small></div>
+          <input id="d-host" value="${esc(ob.host?.name || "")}" placeholder="Start typing, e.g. Universidad Complutense">
+          <small>Recognised French schools and universities worldwide. Each flat shows its travel time to your campus.</small></div>
         <div id="campus"></div>` : ""}
       ${student ? `<div class="two"><label class="field"><span>${ob.role === "seeker" ? "Arriving" : "Leaving"}</span><input id="d-from" type="date" value="${esc(ob.from)}"></label>
         <label class="field"><span>${ob.role === "seeker" ? "Leaving" : "Back"}</span><input id="d-to" type="date" value="${esc(ob.to)}"></label></div>` : ""}
@@ -87,7 +89,10 @@ function stepDetails() {
       <button class="btn primary full" id="save">Continue to identity check</button>
     </form><button class="linkbtn" id="back">Back</button></div>`;
 
-  if (student) autocomplete(document.getElementById("d-uni"), searchHomeUniversities, (it) => { ob.uniRor = it ? it.ror : null; if (it) ob.uni = it.name; });
+  if (student) autocomplete(document.getElementById("d-uni"), searchHomeUniversities, (it) => {
+    ob.uniRor = it ? it.ror : null;
+    if (it) { ob.uni = it.name; ob.homeCity = (it.detail || "").split(",")[0].trim() || null; }
+  });
 
   const drawCampus = () => {
     const box = document.getElementById("campus");
@@ -110,8 +115,8 @@ function stepDetails() {
     if (input) autocomplete(input, searchAddresses, (it) => { ob.campus = it; });
   };
   if (ob.role === "seeker") {
-    autocomplete(document.getElementById("d-host"), searchFrenchSchools, (it) => { ob.host = it; ob.otherCampus = false; ob.campus = null; drawCampus(); },
-      (i) => `<strong>${esc(i.name)}</strong><span>${esc([i.detail, i.source === "registry" ? "international registry" : ""].filter(Boolean).join(" · "))}</span>`);
+    autocomplete(document.getElementById("d-host"), searchDestinationSchools, (it) => { ob.host = it; ob.otherCampus = false; ob.campus = null; drawCampus(); },
+      (i) => `<strong>${esc(i.name)}</strong><span>${esc([i.detail, i.source === "registry" ? "add the campus address next" : ""].filter(Boolean).join(" · "))}</span>`);
     drawCampus();
   }
 
@@ -133,6 +138,7 @@ function stepDetails() {
       await q(sb.from("profiles").update({
         role: ob.role, full_name: ob.name, city: ob.city, phone: student ? null : ob.phone,
         home_university: student ? ob.uni : null, home_university_ror: student ? ob.uniRor : null,
+        home_city: student ? (ob.homeCity || null) : null,
         host_university: ob.role === "seeker" ? ob.host.name : null,
         host_campus: place && place.name ? place.name : null,
         host_lat: place ? place.lat : null, host_lng: place ? place.lng : null,
@@ -226,6 +232,27 @@ function stepStudent() {
   };
 }
 
+// Seekers often leave a flat behind at home: offer to sublet it too.
+function stepOwnFlat() {
+  const home = ob.homeCity || state.profile.home_city;
+  view().innerHTML = `<div class="ob">${stepper()}
+    <h2>Will your own flat be empty while you're away?</h2>
+    <p class="lead">Many exchange students sublet their room or flat back home${home ? ` in ${esc(home)}` : ""} to a student coming the other way. It pays your rent while you're abroad.</p>
+    <div class="roles" role="radiogroup">
+      <label class="role"><input type="radio" name="own" value="yes" ${ob.ownFlat === true ? "checked" : ""}>
+        <span class="ic">${ROLES.subletter.icon}</span>
+        <span><strong>Yes, I'd like to sublet it</strong><span class="d">You'll list it right after this. You can switch between looking for a flat and managing yours from your profile.</span></span></label>
+      <label class="role"><input type="radio" name="own" value="no" ${ob.ownFlat === false ? "checked" : ""}>
+        <span class="ic">${ROLES.seeker.icon}</span>
+        <span><strong>Not now</strong><span class="d">You can list a flat later with the + button.</span></span></label>
+    </div>
+    ${ob.err ? `<p class="err">${esc(ob.err)}</p>` : ""}
+    <div class="stack"><button class="btn primary full" id="cont">Continue</button><button class="linkbtn" id="back">Back</button></div></div>`;
+  view().querySelectorAll('input[name="own"]').forEach((r) => (r.onchange = () => { ob.ownFlat = r.value === "yes"; }));
+  document.getElementById("cont").onclick = () => { if (ob.ownFlat == null) { ob.err = "Choose one of the two options."; return draw(); } next(); };
+  document.getElementById("back").onclick = prev;
+}
+
 function badge(status, title, okText) {
   if (status === "verified") return `<div class="vbadge">${ICON.ok}<span><strong>${title} verified</strong><span>${okText}</span></span></div>`;
   if (status === "pending") return `<div class="vbadge wait">${ICON.clock}<span><strong>${title} being reviewed</strong><span>You can use the app meanwhile. Your profile shows "pending".</span></span></div>`;
@@ -243,12 +270,13 @@ function stepDone() {
       ${badge(p.id_status, "Identity", "Shown on your profile to everyone you match with")}
       ${badge(p.student_status, "Student status", esc(p.home_university || ""))}
     </div>
-    <button class="btn primary full" id="enter">${p.role === "seeker" ? "Start looking for flats" : p.role === "subletter" ? "List my flat" : invite.get() ? "Open the chat" : "Go to my sublet requests"}</button></div>`;
+    <button class="btn primary full" id="enter">${p.role === "seeker" ? (ob.ownFlat ? "List my flat" : "Start looking for flats") : p.role === "subletter" ? "List my flat" : invite.get() ? "Open the chat" : "Go to my sublet requests"}</button></div>`;
   document.getElementById("enter").onclick = async () => {
     await q(sb.from("profiles").update({ onboarded: true }).eq("id", p.id));
     await loadProfile();
+    const listFirst = p.role === "subletter" || (p.role === "seeker" && ob.ownFlat);
     ob = null;
-    go(p.role === "subletter" ? "list" : "discover");
+    go(listFirst ? "list" : "discover");
   };
 }
 
