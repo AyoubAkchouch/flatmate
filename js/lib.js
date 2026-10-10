@@ -78,6 +78,16 @@ export async function q(request) {
   }
   return data;
 }
+// Supabase returns at most 1,000 rows per request: fetch page after page until everything is in.
+// make() must return a fresh, ordered query each time.
+export async function fetchAll(make, pageSize = 1000) {
+  let out = [];
+  for (let from = 0; ; from += pageSize) {
+    const rows = await q(make().range(from, from + pageSize - 1));
+    out = out.concat(rows);
+    if (rows.length < pageSize) return out;
+  }
+}
 export function friendlyError(error) {
   const m = error?.message || String(error);
   if (/rent_not_above_lease/.test(m)) return "The rent can't be higher than the rent on your own lease.";

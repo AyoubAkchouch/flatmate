@@ -16,6 +16,8 @@ Built for a hackathon. Contract templates are placeholders, not legal documents.
 | `js/views/` | One file per screen (onboarding, discover, chat, contract, profile, admin) |
 | `supabase/schema.sql` | The database: tables, security rules, matching logic |
 | `supabase/seed.sql` | Five demo flats in Paris |
+| `supabase/synthetic-data.sql` | Generates thousands of fake flats and students for testing (numbers adjustable at the top) |
+| `supabase/synthetic-cleanup.sql` | Deletes all of that fake data, and nothing else |
 | `supabase/update-2-schools-and-invites.sql` | Update for projects created before 10 Oct 2026, 13:00 (already inside schema.sql) |
 
 There is no build step. The files are served as they are.

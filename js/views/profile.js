@@ -1,5 +1,5 @@
 // Profile: your details, your flats with the demand calculator, your starred flats.
-import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, priceSuggestion, fmtDate, fmtShort, loadProfile, photoUrl } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, fetchAll, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, priceSuggestion, fmtDate, fmtShort, loadProfile, photoUrl } from "../lib.js";
 import { ROLE_LABEL } from "./onboarding.js";
 import { schoolsNear } from "../schools.js";
 
@@ -19,8 +19,8 @@ export async function renderProfile() {
   const [mine, starRows, statsRows, cityListings] = await Promise.all([
     isLandlord ? [] : q(sb.from("listings").select("*").eq("owner_id", p.id).order("created_at")),
     p.role === "seeker" ? q(sb.from("stars").select("listing_id, listing:listings(*)").eq("user_id", p.id).order("created_at", { ascending: false })) : [],
-    q(sb.rpc("listing_stats")),
-    q(sb.from("listings").select("id, city, rent, size_m2").eq("active", true)),
+    fetchAll(() => sb.rpc("listing_stats").order("listing_id")),
+    fetchAll(() => sb.from("listings").select("id, city, rent, size_m2").eq("active", true).order("id")),
   ]);
   const stats = Object.fromEntries(statsRows.map((r) => [r.listing_id, r]));
 

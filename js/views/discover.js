@@ -1,5 +1,5 @@
 // Discover: seekers swipe flats, subletters swipe the students who liked their flat, landlords see their requests.
-import { sb, state, view, go, esc, q, toast, ICON, avatar, photoUrl, floorPlan, travelTo, hostPlace, demandFor, fmtShort, fmtDate } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, fetchAll, ICON, avatar, photoUrl, floorPlan, travelTo, hostPlace, demandFor, fmtShort, fmtDate } from "../lib.js";
 
 const loading = `<p class="loading">Loading…</p>`;
 
@@ -89,10 +89,14 @@ async function findMatch(listingId, seekerId) {
 async function seekerDeck() {
   const p = state.profile;
   const [listings, swiped, stars, statsRows] = await Promise.all([
-    q(sb.from("listings").select("*, owner:profiles!listings_owner_id_fkey(full_name, home_university, host_university, id_status, student_status)").eq("active", true)),
-    q(sb.from("swipes").select("listing_id").eq("seeker_id", p.id).eq("by_role", "seeker")),
+    fetchAll(() => {
+      let qy = sb.from("listings").select("*, owner:profiles!listings_owner_id_fkey(full_name, home_university, host_university, id_status, student_status)").eq("active", true);
+      if (p.city) qy = qy.ilike("city", p.city.trim());
+      return qy.order("id");
+    }),
+    fetchAll(() => sb.from("swipes").select("listing_id").eq("seeker_id", p.id).eq("by_role", "seeker").order("id")),
     q(sb.from("stars").select("listing_id").eq("user_id", p.id)),
-    q(sb.rpc("listing_stats")),
+    fetchAll(() => sb.rpc("listing_stats").order("listing_id")),
   ]);
   const stats = Object.fromEntries(statsRows.map((r) => [r.listing_id, r]));
   const done = new Set(swiped.map((s) => s.listing_id));
