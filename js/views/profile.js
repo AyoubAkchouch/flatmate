@@ -2,12 +2,13 @@
 import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, demandData, priceSuggestion, starsHTML, fmtDate, fmtShort, loadProfile, photoUrl, money, storageSafeName } from "../lib.js";
 import { ROLE_LABEL } from "./onboarding.js";
 import { schoolsNear } from "../schools.js";
+import { needsChecks, startChecks } from "./discover.js";
 
 const STATUS = {
   verified: (t) => `<span class="pill ok">${t} verified</span>`,
   pending: (t) => `<span class="pill wait">${t} pending</span>`,
   failed: (t) => `<span class="pill red">${t} not accepted</span>`,
-  none: (t) => `<span class="pill red">${t} missing</span>`,
+  none: (t) => `<span class="pill wait">${t} not checked yet</span>`,
   not_needed: () => "",
 };
 
@@ -86,7 +87,8 @@ export async function renderProfile() {
       <small style="color:var(--muted);font-size:12px">${mode === "seeker" ? "Discover shows flats ranked for you." : "Discover shows the students who want your flat."}</small></div>` : ""}
     ${p.role !== "landlord" ? `<a class="btn full" href="#/preferences" style="margin-top:14px">${mode === "seeker" ? "Edit what you're looking for" : "Edit your ideal tenant and details"}</a>`
       : `<a class="btn full" href="#/preferences" style="margin-top:14px">Edit your details</a>`}
-    ${["failed", "none"].includes(p.id_status) || ["failed", "none"].includes(p.student_status) ? `<div class="banner" style="margin-top:14px">A check is missing or wasn't accepted. <button class="linkbtn" id="redo" style="padding:0">Do it again</button></div>` : ""}
+    ${p.role === "seeker" && needsChecks(p) ? `<div class="banner" style="margin-top:14px">Verify your identity and student status before you say yes to a flat. <button class="linkbtn" id="verify" style="padding:0">Verify now</button></div>`
+      : ["failed", "none"].includes(p.id_status) || ["failed", "none"].includes(p.student_status) ? `<div class="banner" style="margin-top:14px">A check is missing or wasn't accepted. <button class="linkbtn" id="redo" style="padding:0">Do it again</button></div>` : ""}
     ${isLandlord ? `<section class="psec"><h3>My sublet requests</h3><p class="lead">They appear on your home screen when a tenant invites you from a chat.</p></section>`
       : dual && mode === "seeker" ? ""
       : `<section class="psec"><div class="psec-h"><h3>My flats to sublet</h3><a class="btn" href="#/list">+ Add a flat</a></div>
@@ -120,6 +122,8 @@ export async function renderProfile() {
         : `<span>No recognised school within 4 km. Seekers still see the time to their own campus.</span>`;
     } catch { el.innerHTML = `<span>Nearby schools can't be loaded right now.</span>`; }
   });
+  const vf = document.getElementById("verify");
+  if (vf) vf.onclick = startChecks;
   const redo = document.getElementById("redo");
   if (redo) redo.onclick = async () => {
     await q(sb.from("profiles").update({ onboarded: false }).eq("id", p.id));

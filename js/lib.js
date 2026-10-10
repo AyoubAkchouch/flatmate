@@ -118,6 +118,14 @@ const COUNTRY_CURRENCY = { "united states": "USD", usa: "USD", us: "USD", "unite
   sweden: "SEK", se: "SEK", denmark: "DKK", dk: "DKK", norway: "NOK", no: "NOK", poland: "PLN", pl: "PLN", czechia: "CZK", "czech republic": "CZK", cz: "CZK",
   hungary: "HUF", hu: "HUF", canada: "CAD", ca: "CAD" };
 export const currencyForCountry = (country) => COUNTRY_CURRENCY[String(country || "").trim().toLowerCase()] || "EUR";
+// Flatmate's service fee: 6% of one month's rent, rounded, split between the two students
+// (the seeker's half is rounded up when it doesn't divide evenly). Same rule as fee_split() in the database.
+export const FEE_RATE = 0.06;
+export function feeSplit(rent) {
+  const total = Math.round(rent * FEE_RATE);
+  const seeker = Math.round(total / 2);
+  return { total, seeker, owner: total - seeker };
+}
 // money(2700, "USD") → "$2,700" · money(650) → "€650"
 export function money(amount, currency = "EUR") {
   if (amount == null || amount === "") return "";

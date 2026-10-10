@@ -12,6 +12,7 @@
 @font-face { font-family: "Butler"; src: url("../fonts/butler/Butler-Free-Med.woff2") format("woff2"), url("../fonts/butler/Butler-Free-Med.woff") format("woff"); font-weight: 500; font-display: swap; }
 @font-face { font-family: "Butler"; src: url("../fonts/butler/Butler-Free-Bd.woff2") format("woff2"), url("../fonts/butler/Butler-Free-Bd.woff") format("woff"); font-weight: 700; font-display: swap; }
 @font-face { font-family: "Butler"; src: url("../fonts/butler/Butler-Free-XBd.woff2") format("woff2"), url("../fonts/butler/Butler-Free-XBd.woff") format("woff"); font-weight: 800; font-display: swap; }
+@font-face { font-family: "Butler"; src: url("../fonts/butler/Butler-Free-Blk.woff2") format("woff2"), url("../fonts/butler/Butler-Free-Blk.woff") format("woff"); font-weight: 900; font-display: block; }
 
 :root {
   /* Fonts: display = logo, titles, slogan, prices · body = text and forms · mono = small labels and dates */

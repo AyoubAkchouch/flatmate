@@ -15,8 +15,15 @@ export const ROLE_LABEL = { seeker: "Looking for a flat", subletter: "Subletting
 const LABEL = { role: "Your role", details: "About you", identity: "Identity check", student: "Student status", ownflat: "Your own flat", done: "Ready" };
 let ob = null; // the draft while onboarding
 
-const stepsFor = (role) => ["role", "details", "identity"].concat(role === "landlord" ? [] : ["student"])
-  .concat(role === "seeker" ? ["ownflat"] : []).concat(["done"]);
+// checksOnly: a seeker who skipped the checks at sign-up and is doing them now, before their first yes.
+const stepsFor = (role) => (ob?.checksOnly ? ["identity", "student", "done"]
+  : ["role", "details", "identity"].concat(role === "landlord" ? [] : ["student"])
+    .concat(role === "seeker" ? ["ownflat"] : []).concat(["done"]));
+// Seekers can skip the checks until they say yes to a flat.
+const canSkip = () => ob.role === "seeker" && !ob.checksOnly;
+const skipLink = () => canSkip() ? `<button class="linkbtn" id="skip">Skip for now</button>
+  <small class="skipnote">You can browse flats without it. It's needed before you say yes to one.</small>` : "";
+const wireSkip = () => { const b = document.getElementById("skip"); if (b) b.onclick = next; };
 
 function stepper() {
   const s = stepsFor(ob.role), i = s.indexOf(ob.step);
@@ -29,10 +36,13 @@ function prev() { const s = stepsFor(ob.role), i = s.indexOf(ob.step); if (i > 0
 
 export function renderOnboarding() {
   const p = state.profile;
-  if (!ob || ob.userId !== p.id) {
-    ob = {
+  let checksOnly = false;
+  try { checksOnly = sessionStorage.getItem("fm-checks-only") === "1" && p.role === "seeker" && !!p.full_name; } catch { /* ignore */ }
+  if (!ob || ob.userId !== p.id || (checksOnly && !ob.checksOnly)) {
+    ob = { checksOnly,
       userId: p.id,
-      step: !p.role ? "role" : !p.full_name ? "details"
+      step: checksOnly ? (["none", "failed"].includes(p.id_status) ? "identity" : "student")
+        : !p.role ? "role" : !p.full_name ? "details"
         : ["none", "failed"].includes(p.id_status) ? "identity"
         : p.role !== "landlord" && ["none", "failed"].includes(p.student_status) ? "student"
         : p.role === "seeker" ? "ownflat" : "done",
@@ -172,7 +182,7 @@ function stepIdentity() {
     <input type="file" accept="image/*" ${key === "selfie" ? 'capture="user"' : ""} id="up-${key}" data-key="${key}"></label>`;
   view().innerHTML = `<div class="ob">${stepper()}
     <h2>Check your identity</h2>
-    <p class="lead">Everyone is verified, so you know the person behind each flat and each request is real.</p>
+    <p class="lead">${ob.checksOnly ? "Before you say yes to a flat, students subletting want to know you're real. This takes about a minute." : "Everyone is verified, so you know the person behind each flat and each request is real."}</p>
     <div class="provider">${ICON.shield}<span>Your photos are stored privately and only seen by the review team.</span></div>
     <label class="field"><span>Document type</span><select id="doc">${[["passport", "Passport"], ["id_card", "National ID card"], ["residence_permit", "Residence permit"]]
       .map(([v, t]) => `<option value="${v}" ${ob.doc === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
@@ -180,10 +190,11 @@ function stepIdentity() {
     <div id="prog"></div>
     ${ob.err ? `<p class="err">${esc(ob.err)}</p>` : ""}
     <div class="stack"><button class="btn primary full" id="check">Start the check</button>
-      <button class="linkbtn" id="back">Back</button></div></div>`;
+      ${skipLink()}${ob.checksOnly ? `<button class="linkbtn" id="later">Not now, back to flats</button>` : `<button class="linkbtn" id="back">Back</button>`}</div></div>`;
+  wireSkip(); wireLater();
   document.getElementById("doc").onchange = (e) => (ob.doc = e.target.value);
   view().querySelectorAll(".upload input").forEach((i) => (i.onchange = () => { if (i.files[0]) { ob[i.dataset.key] = i.files[0]; ob.err = ""; draw(); } }));
-  document.getElementById("back").onclick = prev;
+  const bk = document.getElementById("back"); if (bk) bk.onclick = prev;
   document.getElementById("check").onclick = async () => {
     if (!ob.docFile || !ob.selfie) { ob.err = "Add both photos before starting the check."; return draw(); }
     const btn = document.getElementById("check"); btn.disabled = true; btn.textContent = "Checking…";
@@ -212,9 +223,10 @@ function stepStudent() {
     <div id="prog"></div>
     ${ob.err ? `<p class="err">${esc(ob.err)}</p>` : ""}
     <div class="stack"><button class="btn primary full" id="submit">Submit certificate</button>
-      <button class="linkbtn" id="back">Back</button></div></div>`;
+      ${skipLink()}${ob.checksOnly ? `<button class="linkbtn" id="later">Not now, back to flats</button>` : ""}<button class="linkbtn" id="back">Back</button></div></div>`;
   document.getElementById("cert").onchange = (e) => { if (e.target.files[0]) { ob.cert = e.target.files[0]; ob.err = ""; draw(); } };
   document.getElementById("back").onclick = prev;
+  wireSkip(); wireLater();
   document.getElementById("submit").onclick = async () => {
     if (!ob.cert) { ob.err = "Add your certificate before submitting."; return draw(); }
     const btn = document.getElementById("submit"); btn.disabled = true; btn.textContent = "Sending…";
@@ -253,31 +265,42 @@ function stepOwnFlat() {
   document.getElementById("back").onclick = prev;
 }
 
+// Leave the checks for later and go back to the flats.
+function wireLater() {
+  const b = document.getElementById("later");
+  if (b) b.onclick = finish;
+}
+async function finish() {
+  const p = state.profile;
+  try { sessionStorage.removeItem("fm-checks-only"); } catch { /* ignore */ }
+  await q(sb.from("profiles").update({ onboarded: true }).eq("id", p.id));
+  await loadProfile();
+  const listFirst = !ob.checksOnly && (p.role === "subletter" || (p.role === "seeker" && ob.ownFlat));
+  ob = null;
+  go(listFirst ? "list" : "discover");
+}
+
 function badge(status, title, okText) {
   if (status === "verified") return `<div class="vbadge">${ICON.ok}<span><strong>${title} verified</strong><span>${okText}</span></span></div>`;
   if (status === "pending") return `<div class="vbadge wait">${ICON.clock}<span><strong>${title} being reviewed</strong><span>You can use the app meanwhile. Your profile shows "pending".</span></span></div>`;
   if (status === "failed") return `<div class="vbadge na">${ICON.na}<span><strong>${title} not accepted</strong><span>Try again from your profile.</span></span></div>`;
+  if (status === "none" && state.profile.role === "seeker") return `<div class="vbadge wait">${ICON.clock}<span><strong>${title}: later</strong><span>You can browse flats now. It's needed before you say yes to one.</span></span></div>`;
   return `<div class="vbadge na">${ICON.na}<span><strong>${title} not needed</strong><span>Landlords only verify their identity.</span></span></div>`;
 }
 
 function stepDone() {
   const p = state.profile;
   view().innerHTML = `<div class="ob">${stepper()}
-    <h2>You're all set, ${esc((p.full_name || "").split(" ")[0])}</h2>
+    <h2>${ob.checksOnly ? "Thanks" : "You're all set"}, ${esc((p.full_name || "").split(" ")[0])}</h2>
+    ${ob.checksOnly ? `<p class="lead">You can now say yes to flats.</p>` : ""}
     <div class="idcard">${avatarFor(p)}<span><b>${esc(p.full_name)}</b><br><span style="color:var(--muted);font-size:13px">${ROLE_LABEL[p.role]} · ${esc(p.city || "")}</span>
       ${p.exchange_from ? `<br><span style="color:var(--muted);font-size:13px">${fmtDate(p.exchange_from)} → ${fmtDate(p.exchange_to)}</span>` : ""}</span></div>
     <div class="stack">
       ${badge(p.id_status, "Identity", "Shown on your profile to everyone you match with")}
       ${badge(p.student_status, "Student status", esc(p.home_university || ""))}
     </div>
-    <button class="btn primary full" id="enter">${p.role === "seeker" ? (ob.ownFlat ? "List my flat" : "Start looking for flats") : p.role === "subletter" ? "List my flat" : invite.get() ? "Open the chat" : "Go to my sublet requests"}</button></div>`;
-  document.getElementById("enter").onclick = async () => {
-    await q(sb.from("profiles").update({ onboarded: true }).eq("id", p.id));
-    await loadProfile();
-    const listFirst = p.role === "subletter" || (p.role === "seeker" && ob.ownFlat);
-    ob = null;
-    go(listFirst ? "list" : "discover");
-  };
+    <button class="btn primary full" id="enter">${ob.checksOnly ? "Back to the flats" : p.role === "seeker" ? (ob.ownFlat ? "List my flat" : "Start looking for flats") : p.role === "subletter" ? "List my flat" : invite.get() ? "Open the chat" : "Go to my sublet requests"}</button></div>`;
+  document.getElementById("enter").onclick = finish;
 }
 
 function avatarFor(p) {

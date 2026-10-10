@@ -1,5 +1,5 @@
 // Contracts: the list of leases, and the lease itself with its signatures.
-import { sb, state, view, esc, q, toast, avatar, fmtDate, signaturePad, starsHTML, money } from "../lib.js";
+import { sb, state, view, esc, q, toast, avatar, fmtDate, signaturePad, starsHTML, money, feeSplit } from "../lib.js";
 
 // Three versions of the sample lease. Hackathon prototype: not legal documents.
 export const TEMPLATES = {
@@ -79,6 +79,10 @@ export async function renderContract(id) {
     const included = (l.tags || []).filter((x) => x !== "Near public transport" && x !== "Quiet street");
     const bills = (l.tags || []).includes("Bills included");
     const short = tpl === "short", room = tpl === "room";
+    const split = feeSplit(l.rent);
+    const fee = { total: (c.seeker_fee ?? split.seeker) + (c.owner_fee ?? split.owner), seeker: c.seeker_fee ?? split.seeker, owner: c.owner_fee ?? split.owner };
+    const paid = (role) => !!c[role + "_paid_at"];
+    const iPay = myRole === "seeker" || myRole === "owner";
 
     const clauses = [
       ["The parties", `This sublease is made on ${F(fmtDate(agreedOn))} between ${F(owner)}${m.owner?.home_university ? `, a student at ${F(m.owner.home_university)}` : ""} (the <b>Tenant</b>), who rents the flat below${landlordName ? ` from ${F(landlordName)} (the <b>Landlord</b>)` : ""}, and ${F(seeker)}${m.seeker?.home_university ? `, a student at ${F(m.seeker.home_university)}` : ""}${m.seeker?.host_university ? ` on exchange at ${F(m.seeker.host_university)}` : ""} (the <b>Subtenant</b>).`],
@@ -96,6 +100,7 @@ export async function renderContract(id) {
         : `The Tenant confirms they have the Landlord's written permission to sublet${landlordName ? ` (${F(landlordName)})` : ""}, where their lease requires it. The Landlord can also join the chat and sign below.`],
       ["Check-in and check-out", "The Tenant and Subtenant go through the flat together on arrival and departure, and share photos of its condition in the chat."],
       ["Ending early", short ? "The stay can only end early if both students agree in writing. Rent already paid for nights not used is refunded only if the Tenant finds someone else." : "Either student can end the sublease early with 30 days' written notice in the chat. Rent is due until the end of the notice period."],
+      ["Flatmate service fee", `Flatmate's fee is ${F(money(fee.total, cur))}, 6% of one month's rent. ${F(owner)} pays ${F(money(fee.owner, cur))} and ${F(seeker)} pays ${F(money(fee.seeker, cur))}, before signing. It is not part of the rent and isn't refunded if the sublease ends early.`],
       ["Signing electronically", "Each party signs from their own verified Flatmate account. The drawn signature, the signer's name and the time are recorded with this lease and have the same value as a signature on paper."],
     ];
 
@@ -105,6 +110,7 @@ export async function renderContract(id) {
       return `<div class="sig"><div class="row"><strong>${esc(label)} · ${esc(person?.full_name || "")}${mine ? " (you)" : ""}</strong>
           ${sig ? `<span class="pill ok">Signed</span>` : `<span class="pill wait">Waiting</span>`}</div>
         ${sig ? `<img alt="Signature of ${esc(person?.full_name)}" src="${sig}"><span class="sigmeta">Signed electronically by ${esc(person?.full_name)} on ${new Date(at).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>`
+          : mine && iPay && !paid(role) ? `<span class="sigmeta locked">Pay your half of the service fee above to sign.</span>`
           : mine ? `<label class="readok"><input type="checkbox" id="readok" ${readOk ? "checked" : ""}> I've read the whole lease above and I agree to sign it electronically.</label>
             <canvas class="pad" id="pad" aria-label="Draw your signature here"></canvas>
             <div class="btns"><button class="btn" id="clear">Clear</button><button class="btn primary" id="sign" ${readOk ? "" : "disabled"}>Sign as ${esc(person?.full_name || "you")}</button></div>
@@ -123,6 +129,16 @@ export async function renderContract(id) {
         <ol>${clauses.map(([h, b]) => `<li><b>${esc(h)}.</b> ${b}</li>`).join("")}</ol>
         ${all ? `<span class="done">FULLY SIGNED</span>` : ""}
       </article>
+      <section class="feebox no-print">
+        <div class="row"><h3>Flatmate service fee</h3><span class="feetotal">${money(fee.total, cur)}</span></div>
+        <p>6% of one month's rent (${money(l.rent, cur)}), split between the two students. Paid once, before signing.</p>
+        <div class="feerows">
+          ${[["owner", m.owner, fee.owner], ["seeker", m.seeker, fee.seeker]].map(([role, person, amt]) => `<div class="feerow">
+            ${avatar(person?.full_name, person?.id, "", person?.avatar_url)}<span class="t"><b>${esc(person?.full_name || "")}${role === myRole ? " (you)" : ""}</b><small>${role === "owner" ? "Tenant" : "Subtenant"} · ${money(amt, cur)}</small></span>
+            ${paid(role) ? `<span class="pill ok">Paid</span>` : role === myRole ? `<button class="btn primary" id="pay">Pay ${money(amt, cur)}</button>` : `<span class="pill wait">Not paid yet</span>`}</div>`).join("")}
+        </div>
+        ${iPay && paid(myRole) ? `<small class="sigmeta">Your receipt: ${esc(c[myRole + "_payment_ref"] || "")} · ${fmtDate(c[myRole + "_paid_at"])}</small>` : ""}
+      </section>
       <h3 class="section-title" style="font-size:20px">Signatures</h3>
       <div class="sigs">${sigRow("owner", "Tenant", m.owner)}${sigRow("seeker", "Subtenant", m.seeker)}${m.landlord_id ? sigRow("landlord", "Landlord's consent", m.landlord) : ""}</div>
       ${all ? `<button class="btn primary full no-print" id="print" style="margin-top:14px">Save as PDF or print</button>`
@@ -147,9 +163,45 @@ export async function renderContract(id) {
         } catch { signBtn.disabled = false; }
       };
     }
+    const payBtn = document.getElementById("pay");
+    if (payBtn) payBtn.onclick = () => checkout(myRole === "seeker" ? fee.seeker : fee.owner, cur, l);
     const pr = document.getElementById("print");
     if (pr) pr.onclick = () => window.print();
     wireReview();
+  };
+
+  // Prototype checkout: no card details are taken and nothing is charged.
+  const checkout = (amount, cur, l) => {
+    const o = document.createElement("div");
+    o.className = "overlay sheet-wrap";
+    let method = "card";
+    const methods = [["card", "Card"], ["apple", "Apple Pay"], ["paypal", "PayPal"]];
+    o.innerHTML = `<div class="sheet checkout" role="dialog" aria-modal="true" aria-label="Pay the service fee">
+      <div class="sheet-body">
+        <span class="eyebrow">Flatmate service fee</span>
+        <h2>${money(amount, cur)}</h2>
+        <dl class="facts"><dt>For</dt><dd>${esc(l.title)}</dd><dt>Rent</dt><dd>${money(l.rent, cur)} / month</dd>
+          <dt>Fee</dt><dd>6% of one month's rent, your half</dd></dl>
+        <div class="seg" role="radiogroup" aria-label="Payment method">${methods.map(([k, t]) =>
+          `<button type="button" data-m="${k}" aria-pressed="${k === method}">${t}</button>`).join("")}</div>
+        <p class="note">Prototype checkout: no card details are taken and no money is charged. A real launch would use a payment provider such as Stripe.</p>
+        <button class="btn primary full" id="paynow">Pay ${money(amount, cur)}</button>
+        <button class="linkbtn" id="paycancel">Cancel</button>
+      </div></div>`;
+    document.body.appendChild(o);
+    o.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { method = b.dataset.m; o.querySelectorAll("[data-m]").forEach((x) => x.setAttribute("aria-pressed", x === b)); }));
+    o.querySelector("#paycancel").onclick = () => o.remove();
+    o.addEventListener("click", (e) => { if (e.target === o) o.remove(); });
+    o.querySelector("#paynow").onclick = async (e) => {
+      e.target.disabled = true; e.target.textContent = "Processing…";
+      try {
+        const ref = await q(sb.rpc("pay_fee", { m: m.id }));
+        o.remove();
+        toast(`Paid. Receipt ${ref}. You can sign the lease now.`);
+        await reload();
+      } catch { e.target.disabled = false; e.target.textContent = `Pay ${money(amount, cur)}`; }
+    };
+    o.querySelector("#paynow").focus();
   };
 
   // Reviews: the subtenant rates the flat, the tenant rates the subtenant.

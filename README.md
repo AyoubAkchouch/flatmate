@@ -30,6 +30,7 @@ Built for a hackathon. Contract templates are placeholders, not legal documents.
 | `supabase/update-4-preferences-reviews-ranking.sql` | Preferences, reviews, compatibility ranking, and the speed update (already inside schema.sql) |
 | `supabase/update-5-dual-role.sql` | Seekers who also sublet their own flat: home city and view switch (already inside schema.sql) |
 | `supabase/update-6-currency-photos-lease.sql` | Prices in each flat's currency, profile photos, both students agreeing on terms, and the new lease signing rules (already inside schema.sql) |
+| `supabase/update-7-checks-and-fees.sql` | Seekers verify only before their first yes; the 6% service fee, paid before signing (already inside schema.sql) |
 
 There is no build step. The files are served as they are.
 
@@ -67,7 +68,7 @@ You then get a **Review verification checks** button in your profile.
 - **Chat and contracts update live** for everyone in the conversation.
 - **Matching:** a match is created when the seeker says yes to a flat and the subletter says yes to that seeker. Demo flats (Léa, Sofia, Inès) say yes automatically, so you can show a match on stage.
 - **Landlord:** gets an invitation link from the chat. Opening it shows what the invitation is about and which account is logged in; only a landlord account can join, and only the email the tenant entered, if they entered one.
-- **Identity and student checks:** documents are uploaded to private storage. In **demo mode** (the default) they're approved instantly. Switch to **manual review** from the admin page to approve each one yourself.
+- **Identity and student checks:** seekers can skip them at sign-up and browse freely; they're asked to verify the first time they say yes to a flat (the database also refuses a yes without them). Subletters and landlords verify at sign-up. Documents are uploaded to private storage. In **demo mode** (the default) they're approved instantly. Switch to **manual review** from the admin page to approve each one yourself.
 - **Logging in:** a login only lasts while the browser tab is open, and ends after 30 minutes without activity, unless the person ticks "Keep me logged in on this device".
 - **Schools:** home universities come from the worldwide Research Organization Registry (ror.org). Destination schools come from the French higher-education ministry's list of recognised institutions (with the GPS position of their main site) and from the worldwide registry for schools elsewhere; students pin their campus by address, anywhere in Europe (Photon / OpenStreetMap outside France).
 - **Travel time:** the flat's address is turned into coordinates with the French national geocoder (or OpenStreetMap outside France). Seekers see the time to their own campus; subletters see the time from their flat to each applicant's school and to recognised schools nearby. Times are estimates from distance, not live transit routes.
@@ -79,6 +80,8 @@ You then get a **Review verification checks** button in your profile.
 - **Agreeing on terms:** in the chat, each student taps **Agree on terms**. Once both have, the lease opens. The landlord doesn't have to be in the chat for this; inviting them is recommended.
 - **Lease:** a sample sublease (whole flat, short stay, or room) with the names, universities, address, dates, rent, deposit and landlord filled in automatically from the profiles and the listing. Each person ticks "I've read the whole lease", draws their signature on their own account, and the time is recorded. It's complete when both students have signed, plus the landlord if they joined the chat. Anyone can then save it as a PDF.
 - **Currencies:** each flat has its own currency (picked automatically from the address's country, and changeable). A seeker's budget is read in the currency of the flats where they're going.
+- **Swipe cards:** show only the photo, title, price, commute and match score. Tapping a card opens all the details (photos, dates, size, demand, the student subletting, reviews) with Pass, Star and Yes buttons.
+- **Service fee:** Flatmate charges 6% of one month's rent, rounded to the nearest whole unit, split between the two students (the seeker's half is rounded up if it doesn't divide evenly). Each student pays their half on the lease page before they can sign. The checkout is a prototype: no card details are taken and nothing is charged. A real launch would plug in a payment provider such as Stripe.
 - **Profile photos:** added from the profile page (tap the picture). The photo is cropped to a square and shrunk before upload, and shows on cards, chats and leases.
 
 ## Before a real launch

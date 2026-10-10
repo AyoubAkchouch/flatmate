@@ -1,5 +1,5 @@
 // Discover: seekers swipe flats, subletters swipe the students who liked their flat, landlords see their requests.
-import { sb, state, view, go, esc, q, toast, ICON, avatar, photoUrl, floorPlan, demandFor, starsHTML, fmtShort, fmtDate, money } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, ICON, avatar, photoUrl, floorPlan, demandFor, starsHTML, fmtShort, fmtDate, money, loadProfile } from "../lib.js";
 
 const loading = `<p class="loading">Loading…</p>`;
 
@@ -12,7 +12,7 @@ export async function renderDiscover() {
 }
 
 // ---------- Swipe mechanics shared by both decks ----------
-function mountDeck({ items, card, onSwipe, onTop, empty, refill }) {
+function mountDeck({ items, card, onSwipe, onTop, empty, refill, onOpen, beforeLike }) {
   const deckEl = document.getElementById("deck");
   let loading = false;
   const topUp = async () => {
@@ -48,6 +48,12 @@ function mountDeck({ items, card, onSwipe, onTop, empty, refill }) {
   const decide = (dir) => {
     const el = deckEl.querySelector(".card:last-child");
     if (!el || !items.length) return;
+    if (dir > 0 && beforeLike && !beforeLike(items[0])) {
+      // Not allowed to say yes yet: put the card back.
+      el.style.transform = "";
+      el.querySelectorAll(".stamp").forEach((x) => (x.style.opacity = 0));
+      return;
+    }
     el.style.transform = `translateX(${dir * 600}px) rotate(${dir * 25}deg)`;
     const item = items.shift();
     setTimeout(draw, 220);
@@ -56,10 +62,11 @@ function mountDeck({ items, card, onSwipe, onTop, empty, refill }) {
   function drag(el) {
     let x0 = null, dx = 0;
     const like = el.querySelector(".stamp.like"), nope = el.querySelector(".stamp.nope");
-    el.addEventListener("pointerdown", (e) => { if (e.target.closest("button,a")) return; x0 = e.clientX; dx = 0; el.setPointerCapture(e.pointerId); el.classList.add("dragging"); });
+    let y0 = 0, dy = 0;
+    el.addEventListener("pointerdown", (e) => { if (e.target.closest("button,a")) return; x0 = e.clientX; y0 = e.clientY; dx = 0; dy = 0; el.setPointerCapture(e.pointerId); el.classList.add("dragging"); });
     el.addEventListener("pointermove", (e) => {
       if (x0 === null) return;
-      dx = e.clientX - x0;
+      dx = e.clientX - x0; dy = e.clientY - y0;
       el.style.transform = `translateX(${dx}px) rotate(${dx / 18}deg)`;
       if (like) like.style.opacity = Math.max(0, dx / 100);
       if (nope) nope.style.opacity = Math.max(0, -dx / 100);
@@ -67,6 +74,8 @@ function mountDeck({ items, card, onSwipe, onTop, empty, refill }) {
     const end = () => {
       if (x0 === null) return;
       x0 = null; el.classList.remove("dragging");
+      // A tap (no real movement) opens the details.
+      if (onOpen && Math.abs(dx) < 6 && Math.abs(dy) < 6) { el.style.transform = ""; onOpen(items[0], decide); return; }
       if (Math.abs(dx) > 100) decide(Math.sign(dx));
       else { el.style.transform = ""; if (like) like.style.opacity = 0; if (nope) nope.style.opacity = 0; }
     };
@@ -101,6 +110,28 @@ function showMatch(matchId, title, text) {
 async function findMatch(listingId, seekerId) {
   const { data } = await sb.from("matches").select("id").eq("listing_id", listingId).eq("seeker_id", seekerId).maybeSingle();
   return data;
+}
+
+// ---------- Checks before saying yes ----------
+// Seekers can browse freely; the identity and student checks are needed before the first yes.
+export const needsChecks = (p) => p.role === "seeker"
+  && (!["verified", "pending"].includes(p.id_status) || !["verified", "pending", "not_needed"].includes(p.student_status));
+export async function startChecks() {
+  try { sessionStorage.setItem("fm-checks-only", "1"); } catch { /* ignore */ }
+  await q(sb.from("profiles").update({ onboarded: false }).eq("id", state.profile.id));
+  await loadProfile();
+  go("onboarding");
+}
+function verifyGate() {
+  const o = document.createElement("div");
+  o.className = "overlay";
+  o.innerHTML = `<div class="match" role="dialog" aria-modal="true"><h3 class="section-title" style="margin:0">One step before saying yes</h3>
+    <p>Students subletting their flat only see verified people. Check your identity and student status once (about 2 minutes), then come back to this flat.</p>
+    <div class="btns"><button class="btn primary" id="vgo">Verify now</button><button class="btn" id="vno">Keep browsing</button></div></div>`;
+  document.body.appendChild(o);
+  o.querySelector("#vgo").onclick = () => { o.remove(); startChecks(); };
+  o.querySelector("#vno").onclick = () => o.remove();
+  o.querySelector("#vgo").focus();
 }
 
 // ---------- Seeker: ranked flats, 20 at a time ----------
@@ -140,31 +171,80 @@ async function seekerDeck() {
       <b>Set your budget and wishes</b> to get flats ranked for you. →</a>` : "")
     + deckShell(
       `<span class="chip">Near <b>${esc(p.host_university || p.city || "you")}</b></span>${p.budget_max ? `<span class="chip">Up to <b>${money(p.budget_max, items[0]?.currency)}</b></span>` : ""}
-       <a class="chip" href="#/preferences" style="text-decoration:none">Preferences ›</a>`,
-      "Best matches first. Drag right if you're interested, left to pass.");
+       <a class="chip" href="#/preferences" style="text-decoration:none">Preferences ›</a>
+       ${needsChecks(p) ? `<button class="chip verify-chip" id="verify-chip">Verify to say yes ›</button>` : ""}`,
+      "Best matches first. Tap a card for details, drag right if you're interested, left to pass.");
 
+  const bench = (l) => ({ flats: l.city_flats, avg_interest: l.city_avg_interest, median_eur_m2: l.city_median_eur_m2 });
+
+  // Everything about a flat, opened by tapping its card.
+  const openFlat = (l, decide) => {
+    const d = demandFor(l, l, bench(l));
+    const o = document.createElement("div");
+    o.className = "overlay sheet-wrap";
+    const photos = (l.photos || []).map((x) => `<img src="${esc(photoUrl(x))}" alt="" loading="lazy">`).join("");
+    o.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(l.title)}">
+      <button class="sheet-x" aria-label="Close">${ICON.x}</button>
+      <div class="gallery">${photos || `<div class="plan">${floorPlan(l.kind, l.id)}</div>`}</div>
+      ${l.photos?.length > 1 ? `<small class="gallery-hint">${l.photos.length} photos · swipe sideways</small>` : ""}
+      <div class="sheet-body">
+        ${outsideLabel(l, p)}
+        <h2>${esc(l.title)}</h2>
+        <div class="row"><span class="price">${money(l.rent, l.currency)}<small> / month</small></span>
+          <span class="mscore inline">${l.score}<small>% MATCH</small></span></div>
+        <div class="why">${whyLine(l, p)}</div>
+        <dl class="facts">
+          <dt>Where</dt><dd>${esc([l.area, l.city].filter(Boolean).join(", "))}</dd>
+          <dt>Type</dt><dd>${l.kind === "room" ? "Room in a shared flat" : "Whole flat"} · ${l.size_m2} m²</dd>
+          <dt>Free</dt><dd>${fmtDate(l.available_from)} → ${fmtDate(l.available_to)}</dd>
+          ${l.minutes != null ? `<dt>Commute</dt><dd>About ${l.minutes} min to ${esc(p.host_university || "your campus")}</dd>` : ""}
+          <dt>Demand</dt><dd>${d.level === "high" ? `High · ${d.interested} interested this week` : d.level === "low" ? "Low · a hidden gem" : "Normal"}</dd>
+        </dl>
+        ${(l.tags || []).length ? `<div class="tags">${l.tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>` : ""}
+        <div class="host">${avatar(l.owner_name, l.owner_id, "", l.owner_avatar)}<span><b>${esc(l.owner_name || "Student")}</b>${l.owner_verified ? ` · <span style="color:var(--ok)">verified</span>` : ""}${l.owner_university ? `<br><small style="color:var(--muted)">${esc(l.owner_university)}</small>` : ""}</span>
+          ${starsHTML(l.flat_rating, l.flat_reviews)}</div>
+      </div>
+      <div class="sheet-actions"><button class="round pass" data-act="-1" aria-label="Pass">${ICON.x}</button>
+        <button class="btn" data-act="star">${starred.has(l.id) ? "Starred" : "Star"}</button>
+        <button class="round like" data-act="1" aria-label="Yes">${ICON.yes}</button></div></div>`;
+    document.body.appendChild(o);
+    const close = () => { o.remove(); document.removeEventListener("keydown", esc_); };
+    const esc_ = (e) => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", esc_);
+    o.addEventListener("click", (e) => { if (e.target === o) close(); });
+    o.querySelector(".sheet-x").onclick = close;
+    o.querySelector('[data-act="star"]').onclick = () => { document.querySelector(`.card:last-child [data-star="${l.id}"]`)?.click(); close(); };
+    o.querySelectorAll('.round[data-act]').forEach((b) => (b.onclick = () => { close(); decide(+b.dataset.act); }));
+    o.querySelector(".sheet-x").focus();
+  };
+
+  const vc = document.getElementById("verify-chip");
+  if (vc) vc.onclick = startChecks;
   mountDeck({
     items,
     refill: loadBatch,
     card: (l) => {
-      const d = demandFor(l, l, { flats: l.city_flats, avg_interest: l.city_avg_interest, median_eur_m2: l.city_median_eur_m2 });
+      const d = demandFor(l, l, bench(l));
       const on = starred.has(l.id);
       const photo = l.photos && l.photos[0];
       return `<div class="plan ${photo ? "photo" : ""}" ${photo ? `style="background-image:url('${esc(photoUrl(photo))}')"` : ""}>
-          <span class="meta">${l.size_m2} m² · ${esc(l.area || l.city)}</span>${photo ? "" : floorPlan(l.kind, l.id)}
-          ${l.photos.length > 1 ? `<span class="count">${ICON.photo.replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-2px"')} ${l.photos.length}</span>` : ""}
+          ${photo ? "" : floorPlan(l.kind, l.id)}
           <span class="mscore" title="How well this flat matches your preferences">${l.score}<small>% MATCH</small></span>
           <button class="star ${on ? "on" : ""}" data-star="${l.id}" aria-pressed="${on}" aria-label="Star this flat">${ICON.star}</button>
-          ${d.level === "high" ? `<span class="dpill high">High demand${d.basis === "interest" ? ` · ${d.interested} interested this week` : ""}</span>`
-            : d.level === "low" ? `<span class="dpill gem">${ICON.gem}Hidden gem</span>` : ""}
+          ${d.level === "high" ? `<span class="dpill high">High demand</span>` : d.level === "low" ? `<span class="dpill gem">${ICON.gem}Hidden gem</span>` : ""}
           <span class="stamp like">YES</span><span class="stamp nope">PASS</span></div>
-        <div class="info">${outsideLabel(l, p)}<h2>${esc(l.title)}</h2>
+        <div class="info compact">
+          <h2>${esc(l.title)}</h2>
           <div class="row"><span class="price">${money(l.rent, l.currency)}<small> / month</small></span>
-            <span class="dates">${fmtShort(l.available_from)} → ${fmtDate(l.available_to)}</span></div>
-          <div class="why">${whyLine(l, p)}</div>
-          <div class="host">${avatar(l.owner_name, l.owner_id, "", l.owner_avatar)}<span><b>${esc(l.owner_name || "Student")}</b>${l.owner_verified ? ` · <span style="color:var(--ok)">verified</span>` : ""}</span>
-            ${starsHTML(l.flat_rating, l.flat_reviews)}</div>
-          <div class="tags">${(l.kind === "room" ? ["Room"] : ["Whole flat"]).concat(l.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div></div>`;
+            ${l.minutes != null ? `<span class="commute">${ICON.train}${l.minutes} min to campus</span>` : ""}</div>
+          <div class="sub">${esc(l.area || l.city)} · ${l.kind === "room" ? "Room" : "Whole flat"}${l.tier > 1 ? ` · <span class="off">outside your filters</span>` : ""}</div>
+          <span class="tapmore">Tap the card for details</span></div>`;
+    },
+    onOpen: (l, decide) => openFlat(l, decide),
+    beforeLike: () => {
+      if (!needsChecks(state.profile)) return true;
+      verifyGate();
+      return false;
     },
     onTop: (l, el) => {
       if (!seen.has(l.id)) { seen.add(l.id); sb.from("listing_views").insert({ listing_id: l.id, user_id: p.id }).then(() => {}); }
