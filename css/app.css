@@ -20,7 +20,12 @@ nav.tabs a{color:var(--muted);font:600 12px var(--body);padding:12px 4px;display
 nav.tabs svg{width:22px;height:22px}
 nav.tabs a[aria-current="page"]{color:var(--ink)}
 nav.tabs a[aria-current="page"]::before{content:"";position:absolute;top:-1px;left:30%;right:30%;height:2px;background:var(--accent)}
-button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible,label:focus-within{outline:2px solid var(--blue);outline-offset:2px}
+/* Focus ring: only for people moving around with the keyboard (html.kbd), never after a click or tap. */
+*{-webkit-tap-highlight-color:transparent}
+:focus,:focus-visible,label:focus-within{outline:none}
+html.kbd button:focus-visible,html.kbd input:focus-visible,html.kbd select:focus-visible,html.kbd textarea:focus-visible,html.kbd a:focus-visible,html.kbd label:focus-within{outline:2px solid var(--blue);outline-offset:2px}
+/* Text fields still show they're active, with a quiet border instead of a ring. */
+.field input:focus,.field select:focus,.field textarea:focus,.composer input:focus{border-color:var(--accent)}
 
 /* Generic */
 .btn{font:600 14px var(--body);border-radius:10px;padding:10px 16px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px}

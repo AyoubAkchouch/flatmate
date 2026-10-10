@@ -60,6 +60,10 @@ export function applyLayout() {
 wideScreen.addEventListener("change", applyLayout);
 applyLayout();
 
+// Keyboard users get a visible focus ring; it disappears as soon as someone clicks or taps.
+window.addEventListener("keydown", (e) => { if (e.key === "Tab") document.documentElement.classList.add("kbd"); }, true);
+window.addEventListener("pointerdown", () => document.documentElement.classList.remove("kbd"), true);
+
 // The signed-in person and their profile row.
 export const state = { session: null, profile: null, cleanup: null };
 
