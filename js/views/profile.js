@@ -1,6 +1,7 @@
 // Profile: your details, your flats with the demand calculator, your starred flats.
-import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, demandFor, priceSuggestion, fmtDate, fmtShort, loadProfile, photoUrl } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, ICON, avatar, travelTo, hostPlace, travelMinutes, distanceKm, demandFor, priceSuggestion, fmtDate, fmtShort, loadProfile, photoUrl } from "../lib.js";
 import { ROLE_LABEL } from "./onboarding.js";
+import { schoolsNear } from "../schools.js";
 
 const STATUS = {
   verified: (t) => `<span class="pill ok">${t} verified</span>`,
@@ -40,12 +41,14 @@ export async function renderProfile() {
       <small style="font-size:12px;color:var(--muted)">${d.basis === "interest"
         ? `Based on views, yeses and stars this week, compared with ${d.peers} flats in ${esc(l.city)}.`
         : `Not enough activity yet in ${esc(l.city)}, so this compares your price per m² with ${d.peers > 1 ? `${d.peers} flats` : "similar flats"} there.`}</small>` : ""}
+      ${l.lat != null ? `<div class="near-list" data-near="${l.id}" data-lat="${l.lat}" data-lng="${l.lng}"><span>Finding schools nearby…</span></div>`
+        : `<small style="font-size:12px;color:var(--muted)">Add a full street address to show travel times to nearby schools.</small>`}
       <a class="btn" href="#/list/${l.id}">Edit or pause</a></article>`;
   };
 
   const starred = starRows.filter((r) => r.listing);
   const starRow = (r) => {
-    const l = r.listing, d = demandFor(l, stats, cityListings), tr = travelTo(l, p.host_university);
+    const l = r.listing, d = demandFor(l, stats, cityListings), tr = travelTo(l, hostPlace(p));
     return `<div class="srow">${l.photos?.[0] ? `<img src="${esc(photoUrl(l.photos[0]))}" alt="" style="width:44px;height:44px;border-radius:8px;object-fit:cover">` : ""}
       <span class="t"><strong>${esc(l.title)}</strong><span>€${l.rent}${tr ? ` · ${tr.minutes} min to ${esc(tr.uni)}` : ""}${l.active ? "" : " · no longer listed"}</span></span>
       ${d.level === "high" ? `<span class="pill red">High demand</span>` : d.level === "low" ? `<span class="pill gem">Hidden gem</span>` : ""}
@@ -59,7 +62,7 @@ export async function renderProfile() {
     <dl class="pdl">
       <dt>Email</dt><dd>${esc(p.email)}</dd>
       ${p.home_university ? `<dt>Home university</dt><dd>${esc(p.home_university)}</dd>` : ""}
-      ${p.host_university ? `<dt>Going to</dt><dd>${esc(p.host_university)}</dd>` : ""}
+      ${p.host_university ? `<dt>Going to</dt><dd>${esc(p.host_university)}${p.host_campus ? `<br><span style="font-weight:400;color:var(--muted)">${esc(p.host_campus)}</span>` : ""}</dd>` : ""}
       <dt>City</dt><dd>${esc(p.city)}</dd>
       ${p.exchange_from ? `<dt>Exchange</dt><dd>${fmtDate(p.exchange_from)} → ${fmtDate(p.exchange_to)}</dd>` : ""}
     </dl>
@@ -85,6 +88,16 @@ export async function renderProfile() {
     await q(sb.from("stars").delete().eq("user_id", p.id).eq("listing_id", b.dataset.unstar));
     renderProfile();
   }));
+  // Recognised schools close to each of your flats, with an estimated travel time.
+  view().querySelectorAll("[data-near]").forEach(async (el) => {
+    const here = { lat: +el.dataset.lat, lng: +el.dataset.lng };
+    try {
+      const list = await schoolsNear(here.lat, here.lng, 4, 4);
+      el.innerHTML = list.length
+        ? `<span>Close to recognised schools:</span>${list.map((s) => `<span><b>${travelMinutes(distanceKm(here, s))} min</b> · ${esc(s.name)}</span>`).join("")}<span>Seekers also see the time to their own campus.</span>`
+        : `<span>No recognised school within 4 km. Seekers still see the time to their own campus.</span>`;
+    } catch { el.innerHTML = `<span>Nearby schools can't be loaded right now.</span>`; }
+  });
   const redo = document.getElementById("redo");
   if (redo) redo.onclick = async () => {
     await q(sb.from("profiles").update({ onboarded: false }).eq("id", p.id));

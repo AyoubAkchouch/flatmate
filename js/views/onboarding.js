@@ -1,6 +1,6 @@
 // Sign-up steps: role → details → identity check → student check → done.
 import { sb, state, view, go, esc, q, toast, invite, ICON, loadProfile, storageSafeName, fmtDate } from "../lib.js";
-import { UNIVERSITIES } from "../universities.js";
+import { searchHomeUniversities, searchFrenchSchools, searchAddresses, autocomplete } from "../schools.js";
 
 const ROLES = {
   seeker: { title: "I'm looking for a flat", d: "You're arriving somewhere on an exchange.", student: true,
@@ -35,7 +35,9 @@ export function renderOnboarding() {
         : ["none", "failed"].includes(p.id_status) ? "identity"
         : p.role !== "landlord" && ["none", "failed"].includes(p.student_status) ? "student" : "done",
       role: p.role || (invite.get() ? "landlord" : null),
-      name: p.full_name || "", uni: p.home_university || "", host: p.host_university || UNIVERSITIES[0].name,
+      name: p.full_name || "", uni: p.home_university || "", uniRor: p.home_university_ror || null,
+      host: p.host_university ? { name: p.host_university, lat: p.host_lat, lng: p.host_lng } : null,
+      campus: p.host_campus ? { name: p.host_campus, lat: p.host_lat, lng: p.host_lng } : null, otherCampus: !!p.host_campus,
       city: p.city || "Paris", from: p.exchange_from || "", to: p.exchange_to || "", phone: p.phone || "",
       doc: "passport", docFile: null, selfie: null, cert: null, busy: false, err: "",
     };
@@ -71,28 +73,69 @@ function stepDetails() {
     <h2>${student ? "Tell us about your exchange" : "Tell us about you"}</h2>
     <form class="form" id="f" novalidate>
       <label class="field"><span>Full name, as on your ID</span><input id="d-name" value="${esc(ob.name)}" autocomplete="name"></label>
-      ${student ? `<label class="field"><span>Home university</span><input id="d-uni" value="${esc(ob.uni)}" placeholder="e.g. University of Lagos"></label>`
+      ${student ? `<div class="field"><span>Home university</span><input id="d-uni" value="${esc(ob.uni)}" placeholder="Start typing, e.g. University of Lagos">
+          <small>From the worldwide Research Organization Registry.</small></div>`
         : `<label class="field"><span>Phone</span><input id="d-phone" value="${esc(ob.phone)}" autocomplete="tel"></label>`}
       <label class="field"><span>${cityLabel}</span><input id="d-city" value="${esc(ob.city)}"></label>
-      ${ob.role === "seeker" ? `<label class="field"><span>University you're going to</span><select id="d-host">${UNIVERSITIES.map((u) => `<option ${ob.host === u.name ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select><small>Each flat shows its travel time to this university.</small></label>` : ""}
+      ${ob.role === "seeker" ? `<div class="field"><span>School you're going to</span>
+          <input id="d-host" value="${esc(ob.host?.name || "")}" placeholder="Start typing, e.g. Sorbonne Université">
+          <small>Schools recognised by the French higher-education ministry. Each flat shows its travel time to your campus.</small></div>
+        <div id="campus"></div>` : ""}
       ${student ? `<div class="two"><label class="field"><span>${ob.role === "seeker" ? "Arriving" : "Leaving"}</span><input id="d-from" type="date" value="${esc(ob.from)}"></label>
         <label class="field"><span>${ob.role === "seeker" ? "Leaving" : "Back"}</span><input id="d-to" type="date" value="${esc(ob.to)}"></label></div>` : ""}
       ${ob.err ? `<p class="err">${esc(ob.err)}</p>` : ""}
       <button class="btn primary full" id="save">Continue to identity check</button>
     </form><button class="linkbtn" id="back">Back</button></div>`;
+
+  if (student) autocomplete(document.getElementById("d-uni"), searchHomeUniversities, (it) => { ob.uniRor = it ? it.ror : null; if (it) ob.uni = it.name; });
+
+  const drawCampus = () => {
+    const box = document.getElementById("campus");
+    if (!box) return;
+    const h = ob.host;
+    if (!h) { box.innerHTML = ""; return; }
+    const needsAddress = h.lat == null || ob.otherCampus;
+    box.innerHTML = needsAddress
+      ? `<div class="field"><span>Address of your campus</span>
+          <input id="d-campus" value="${esc(ob.campus?.name || "")}" placeholder="Start typing the street and city">
+          <small>${h.lat == null ? "We don't have a location for this school yet, so add the address where your classes are." : "Where most of your classes take place."}</small>
+          ${h.lat != null ? `<button type="button" class="linkbtn" id="mainsite" style="justify-self:start;padding:4px 0">Use the main site instead</button>` : ""}</div>`
+      : `<div class="picked">${ICON.ok}<span>Travel times will be measured to the main site of <b>${esc(h.name)}</b><small>${esc(h.detail || "")}</small></span>
+          <button type="button" class="linkbtn" id="othercampus" style="padding:0">Other campus</button></div>`;
+    const other = document.getElementById("othercampus");
+    if (other) other.onclick = () => { ob.otherCampus = true; drawCampus(); document.getElementById("d-campus").focus(); };
+    const main = document.getElementById("mainsite");
+    if (main) main.onclick = () => { ob.otherCampus = false; ob.campus = null; drawCampus(); };
+    const input = document.getElementById("d-campus");
+    if (input) autocomplete(input, searchAddresses, (it) => { ob.campus = it; });
+  };
+  if (ob.role === "seeker") {
+    autocomplete(document.getElementById("d-host"), searchFrenchSchools, (it) => { ob.host = it; ob.otherCampus = false; ob.campus = null; drawCampus(); },
+      (i) => `<strong>${esc(i.name)}</strong><span>${esc([i.detail, i.source === "registry" ? "international registry" : ""].filter(Boolean).join(" · "))}</span>`);
+    drawCampus();
+  }
+
   const v = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ""; };
   document.getElementById("f").onsubmit = async (e) => {
     e.preventDefault();
     ob.name = v("d-name"); ob.city = v("d-city");
     if (student) { ob.uni = v("d-uni"); ob.from = v("d-from"); ob.to = v("d-to"); } else ob.phone = v("d-phone");
-    if (ob.role === "seeker") ob.host = v("d-host");
     if (!ob.name || !ob.city || (student && (!ob.uni || !ob.from || !ob.to))) { ob.err = "Fill in every field to continue."; return draw(); }
     if (student && ob.to <= ob.from) { ob.err = "The end date needs to be after the start date."; return draw(); }
+    let place = null;
+    if (ob.role === "seeker") {
+      if (!ob.host) { ob.err = "Choose the school you're going to from the suggestions."; return draw(); }
+      place = (ob.otherCampus || ob.host.lat == null) ? ob.campus : { name: null, lat: ob.host.lat, lng: ob.host.lng };
+      if (!place) { ob.err = "Choose your campus address from the suggestions."; return draw(); }
+    }
     const btn = document.getElementById("save"); btn.disabled = true; btn.textContent = "Saving…";
     try {
       await q(sb.from("profiles").update({
         role: ob.role, full_name: ob.name, city: ob.city, phone: student ? null : ob.phone,
-        home_university: student ? ob.uni : null, host_university: ob.role === "seeker" ? ob.host : null,
+        home_university: student ? ob.uni : null, home_university_ror: student ? ob.uniRor : null,
+        host_university: ob.role === "seeker" ? ob.host.name : null,
+        host_campus: place && place.name ? place.name : null,
+        host_lat: place ? place.lat : null, host_lng: place ? place.lng : null,
         exchange_from: student ? ob.from : null, exchange_to: student ? ob.to : null,
       }).eq("id", ob.userId));
       if (!student) await q(sb.rpc("skip_student_check"));

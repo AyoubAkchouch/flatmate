@@ -1,5 +1,5 @@
 // Welcome screen and sign-up / log-in.
-import { sb, view, go, esc, invite, friendlyError } from "../lib.js";
+import { sb, view, go, esc, invite, friendlyError, rememberDevice } from "../lib.js";
 import { BRAND } from "../brand.js";
 
 export function renderWelcome() {
@@ -33,6 +33,8 @@ export function renderAuth(mode = "signup") {
       <label class="field"><span>Email</span><input id="a-email" type="email" autocomplete="email" required></label>
       <label class="field"><span>Password</span><input id="a-pass" type="password" autocomplete="${signup ? "new-password" : "current-password"}" minlength="6" required>
         ${signup ? "<small>At least 6 characters.</small>" : ""}</label>
+      <label class="remember"><input type="checkbox" id="a-remember"> Keep me logged in on this device</label>
+      <small style="color:var(--muted);font-size:12px;margin-top:-8px">Leave this off on shared computers. Otherwise you're logged out when you close this tab or after 30 minutes without activity.</small>
       <p class="err" id="a-err" hidden></p>
       <button class="btn primary full" id="a-go">${signup ? "Create account" : "Log in"}</button>
     </form>
@@ -50,18 +52,25 @@ export function renderAuth(mode = "signup") {
     const btn = document.getElementById("a-go");
     btn.disabled = true;
     btn.textContent = signup ? "Creating…" : "Logging in…";
+    rememberDevice.set(document.getElementById("a-remember").checked);
+    // The confirmation email brings people back to this site, not to a default address.
+    const emailRedirectTo = location.origin + location.pathname;
     const { data, error } = signup
-      ? await sb.auth.signUp({ email, password })
+      ? await sb.auth.signUp({ email, password, options: { emailRedirectTo } })
       : await sb.auth.signInWithPassword({ email, password });
     btn.disabled = false;
     btn.textContent = signup ? "Create account" : "Log in";
     if (error) {
+      if (/not confirmed/i.test(error.message)) return err("Confirm your email first: open the link we sent you, then log in.");
       if (/Invalid login/i.test(error.message)) return err("That email and password don't match. Check them, or create an account.");
       if (/already registered/i.test(error.message)) return err("An account with this email already exists. Log in instead.");
       return err(friendlyError(error));
     }
     if (signup && !data.session) {
-      view().innerHTML = `<div class="empty"><h3>Check your inbox</h3><p>We sent a confirmation link to <b>${esc(email)}</b>. Open it on this device to continue.</p></div>`;
+      // Supabase also lands here when the email already has an account, without saying so (to protect privacy).
+      view().innerHTML = `<div class="empty"><h3>Check your inbox</h3><p>We sent a confirmation link to <b>${esc(email)}</b>. Open it to activate your account, then continue from there.</p>
+        <p style="font-size:13px">No email after a few minutes? Check your spam folder. If you already have an account with this email, log in instead.</p>
+        <a class="btn" href="#/auth/login">Log in</a></div>`;
       return;
     }
     // Signed in: main.js reacts to the new session and opens the right screen.

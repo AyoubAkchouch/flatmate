@@ -1,9 +1,37 @@
 // Shared helpers used by every screen.
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
-import { findUniversity } from "./universities.js";
 
 export const configured = !SUPABASE_URL.startsWith("PASTE") && !SUPABASE_ANON_KEY.startsWith("PASTE");
-export const sb = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+// ---------- Where the login is kept ----------
+// By default a login only lives in the current browser tab and ends when the tab closes.
+// "Keep me logged in on this device" stores it in the browser instead.
+const REMEMBER = "fm-remember";
+const safe = (fn, fallback = null) => { try { return fn(); } catch { return fallback; } };
+export const rememberDevice = {
+  get: () => safe(() => localStorage.getItem(REMEMBER) === "1", false),
+  set: (on) => safe(() => (on ? localStorage.setItem(REMEMBER, "1") : localStorage.removeItem(REMEMBER))),
+};
+const authStorage = {
+  getItem: (k) => safe(() => (rememberDevice.get() ? localStorage : sessionStorage).getItem(k)),
+  setItem: (k, v) => safe(() => (rememberDevice.get() ? localStorage : sessionStorage).setItem(k, v)),
+  removeItem: (k) => safe(() => { localStorage.removeItem(k); sessionStorage.removeItem(k); }),
+};
+// Remove logins saved by the earlier version of the app unless the person chose to stay logged in.
+if (!rememberDevice.get()) safe(() => Object.keys(localStorage).filter((k) => k.startsWith("sb-")).forEach((k) => localStorage.removeItem(k)));
+
+export const sb = configured
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storage: authStorage, persistSession: true, detectSessionInUrl: true } })
+  : null;
+
+// Log out after 30 minutes without any activity, unless the person chose to stay logged in.
+const IDLE_MS = 30 * 60 * 1000;
+let lastActive = Date.now();
+["pointerdown", "keydown", "scroll", "touchstart"].forEach((ev) => window.addEventListener(ev, () => { lastActive = Date.now(); }, { passive: true, capture: true }));
+setInterval(async () => {
+  if (!sb || rememberDevice.get() || !state.session) return;
+  if (Date.now() - lastActive > IDLE_MS) { await sb.auth.signOut(); toast("You were logged out after 30 minutes without activity."); }
+}, 60 * 1000);
 
 // The signed-in person and their profile row.
 export const state = { session: null, profile: null, cleanup: null };
@@ -108,11 +136,14 @@ function km(a, b) {
   return 2 * 6371 * Math.asin(Math.sqrt(h));
 }
 // Estimate for public transport in a big city: about 3.4 minutes per km plus 7 minutes of walking and waiting.
-export function travelTo(listing, universityName) {
-  const u = findUniversity(universityName);
-  if (!u || listing.lat == null || listing.lng == null) return null;
-  return { minutes: Math.round(7 + km(listing, u) * 3.4), uni: u.short };
+export function travelTo(listing, place) {
+  if (!place || place.lat == null || place.lng == null || listing.lat == null || listing.lng == null) return null;
+  return { minutes: travelMinutes(km(listing, place)), uni: place.name };
 }
+export const travelMinutes = (distanceKm) => Math.round(7 + distanceKm * 3.4);
+export const distanceKm = km;
+// The student's own campus, from their profile.
+export const hostPlace = (p) => (p && p.host_lat != null ? { lat: p.host_lat, lng: p.host_lng, name: p.host_university } : null);
 
 // ---------- Demand ----------
 // stats: { [listingId]: { views_7d, interested_7d } } from the listing_stats() database function.

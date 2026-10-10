@@ -9,6 +9,7 @@ import { renderChats, renderChat } from "./views/chat.js";
 import { renderContracts, renderContract } from "./views/contract.js";
 import { renderProfile } from "./views/profile.js";
 import { renderAdmin } from "./views/admin.js";
+import { renderInvite } from "./views/invite.js";
 
 document.title = BRAND.fullName;
 document.getElementById("brand").innerHTML = `${esc(BRAND.nameStart)}<span>${esc(BRAND.nameEnd)}</span>`;
@@ -25,6 +26,7 @@ const ROUTES = {
   contract: renderContract,
   profile: renderProfile,
   admin: renderAdmin,
+  invite: renderInvite,
 };
 const PUBLIC = ["welcome", "auth"];
 const TABS = { discover: "discover", list: "discover", chats: "chats", chat: "chats", contracts: "contracts", contract: "contracts", profile: "profile", admin: "profile" };
@@ -54,7 +56,8 @@ async function doRoute() {
   const [name = "", arg] = location.hash.replace(/^#\/?/, "").split("/");
 
   // A landlord opened an invitation link: remember it until they're signed in.
-  if (name === "invite" && arg) { invite.set(arg); return go(state.session ? "discover" : "welcome"); }
+  // Nothing is joined automatically: the landlord sees who is invited and confirms first.
+  if (name === "invite" && arg) { invite.set(arg); return go(state.session ? "invite" : "welcome"); }
 
   if (!state.session) {
     document.getElementById("tabs").hidden = true;
@@ -67,15 +70,8 @@ async function doRoute() {
   if (!state.profile.onboarded) {
     if (name !== "onboarding") return go("onboarding");
   } else {
-    const pending = invite.get();
-    if (pending) {
-      invite.clear();
-      try {
-        const matchId = await q(sb.rpc("accept_invite", { token: pending }));
-        toast("You joined the chat as the landlord.");
-        return go("chat/" + matchId);
-      } catch { /* error already shown */ }
-    }
+    if (invite.get() && name !== "invite") return go("invite");
+    if (!invite.get() && name === "invite") return go("discover");
     if (PUBLIC.includes(name) || name === "onboarding" || !ROUTES[name]) return go("discover");
   }
 

@@ -20,7 +20,11 @@ create table public.profiles (
   role text check (role in ('seeker','subletter','landlord')),
   full_name text,
   home_university text,
+  home_university_ror text,
   host_university text,
+  host_campus text,
+  host_lat double precision,
+  host_lng double precision,
   city text,
   exchange_from date,
   exchange_to date,
@@ -186,23 +190,51 @@ end $$;
 create trigger swipe_match after insert on public.swipes
   for each row execute function public.on_swipe();
 
--- The landlord opens the invite link and joins the chat.
+-- What an invitation is about, shown before the landlord decides to join.
+create function public.invite_preview(token text)
+returns table (title text, area text, city text, rent int, owner_name text, seeker_name text,
+               landlord_taken boolean, expected_email text)
+language sql stable security definer set search_path = public as $$
+  select l.title, l.area, l.city, l.rent, o.full_name, s.full_name,
+    m.landlord_id is not null,
+    -- Only a hint, like "m•••@gmail.com", never the full address.
+    case when l.landlord_email is null or l.landlord_email = '' then null
+      else left(l.landlord_email, 1) || '•••@' || split_part(l.landlord_email, '@', 2) end
+  from matches m
+  join listings l on l.id = m.listing_id
+  join profiles o on o.id = m.owner_id
+  join profiles s on s.id = m.seeker_id
+  where m.invite_token = token
+$$;
+
+-- Joining is only for landlord accounts, and only for the expected email when the tenant gave one.
 create function public.accept_invite(token text) returns uuid
 language plpgsql security definer set search_path = public as $$
 declare
   m matches;
-  nm text;
+  me profiles;
+  expected text;
 begin
   select * into m from matches where invite_token = token;
   if m.id is null then raise exception 'This invitation link is not valid.'; end if;
+  select * into me from profiles where id = auth.uid();
+  if me.role is distinct from 'landlord' then
+    raise exception 'Only a landlord account can accept this invitation. Log out and sign in as the landlord.';
+  end if;
+  if auth.uid() in (m.seeker_id, m.owner_id) then
+    raise exception 'You are already part of this chat as a student.';
+  end if;
+  select landlord_email into expected from listings where id = m.listing_id;
+  if expected is not null and expected <> '' and lower(expected) <> lower(me.email) then
+    raise exception 'This invitation was sent to a different email address. Sign in with the email the tenant gave.';
+  end if;
   if m.landlord_id is not null and m.landlord_id <> auth.uid() then
     raise exception 'Another landlord already joined this chat.';
   end if;
   if m.landlord_id is null then
     update matches set landlord_id = auth.uid() where id = m.id;
-    select full_name into nm from profiles where id = auth.uid();
     insert into messages (match_id, kind, body)
-      values (m.id, 'system', coalesce(nm, 'The landlord') || ' (landlord) joined the chat.');
+      values (m.id, 'system', coalesce(me.full_name, 'The landlord') || ' (landlord) joined the chat.');
   end if;
   return m.id;
 end $$;
@@ -338,7 +370,8 @@ create policy "profiles readable" on public.profiles for select to authenticated
 create policy "edit own profile" on public.profiles for update to authenticated using (id = auth.uid());
 -- People can edit their details, but not their verification status or admin flag.
 revoke update on public.profiles from authenticated, anon;
-grant update (role, full_name, home_university, host_university, city, exchange_from, exchange_to, phone, onboarded)
+grant update (role, full_name, home_university, home_university_ror, host_university, host_campus, host_lat, host_lng,
+  city, exchange_from, exchange_to, phone, onboarded)
   on public.profiles to authenticated;
 
 create policy "listings readable" on public.listings for select to authenticated using (true);

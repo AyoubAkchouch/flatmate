@@ -1,6 +1,6 @@
 // Add or edit a flat to sublet. #/list = new flat, #/list/<id> = edit.
 import { sb, state, view, go, esc, q, toast, ICON, geocode, photoUrl, storageSafeName } from "../lib.js";
-import { UNIVERSITIES } from "../universities.js";
+import { searchAddresses, autocomplete } from "../schools.js";
 
 const TAGS = ["Furnished", "Bills included", "Washing machine", "Wi-Fi", "Balcony", "Near public transport", "Bike storage", "Quiet street"];
 
@@ -15,7 +15,7 @@ export async function renderListingForm(id) {
   let newFiles = [];
   let keptPhotos = l?.photos ? [...l.photos] : [];
   const val = (k, fallback = "") => esc(l ? l[k] ?? "" : fallback);
-  const uniOptions = [...new Set([p.home_university, ...UNIVERSITIES.map((u) => u.name)].filter(Boolean))];
+  let pinned = l && l.lat != null ? { name: l.address, lat: l.lat, lng: l.lng } : null; // address chosen from suggestions
 
   view().innerHTML = `<div class="ob">
     <a class="back" href="#/${l ? "profile" : "discover"}">‹ Cancel</a>
@@ -30,11 +30,10 @@ export async function renderListingForm(id) {
         <div class="thumbs" id="thumbs"></div>
         <label class="upload" for="l-photos" style="min-height:80px">${ICON.photo}<strong>Add photos</strong><small>The first photo is the one students see first</small>
           <input type="file" id="l-photos" accept="image/*" multiple></label></div>
-      <label class="field"><span>Street address</span><input id="l-address" value="${val("address")}" placeholder="e.g. 12 rue Oberkampf"><small>Used to work out travel times. Students only see the neighbourhood.</small></label>
+      <div class="field"><span>Street address</span><input id="l-address" value="${val("address")}" placeholder="Start typing, e.g. 12 rue Oberkampf Paris">
+        <small>Used to work out travel times to nearby schools and to each student's campus. Students only see the neighbourhood.</small></div>
       <div class="two"><label class="field"><span>City</span><input id="l-city" value="${val("city", p.role === "subletter" ? p.city || "" : "")}"></label>
         <label class="field"><span>Neighbourhood</span><input id="l-area" value="${val("area")}" placeholder="e.g. 11e · Oberkampf"></label></div>
-      <label class="field"><span>Nearest university ${l ? "" : `<span class="auto">From your profile</span>`}</span>
-        <select id="l-uni">${uniOptions.map((u) => `<option ${(l ? l.near_university : p.home_university) === u ? "selected" : ""}>${esc(u)}</option>`).join("")}</select></label>
       <div class="two"><label class="field"><span>Free from ${l ? "" : `<span class="auto">Your exchange</span>`}</span><input id="l-from" type="date" value="${val("available_from", p.exchange_from || "")}"></label>
         <label class="field"><span>Until</span><input id="l-to" type="date" value="${val("available_to", p.exchange_to || "")}"></label></div>
       <div class="two"><label class="field"><span>Size (m²)</span><input id="l-size" type="number" min="5" inputmode="numeric" value="${val("size_m2")}" placeholder="20"></label>
@@ -73,13 +72,19 @@ export async function renderListingForm(id) {
     go("profile");
   };
   if (!l) $("l-title").focus();
+  autocomplete($("l-address"), searchAddresses, (it) => {
+    pinned = it;
+    if (!it) return;
+    const ctx = (it.detail || "").split(",");
+    if (!$("l-city").value.trim()) $("l-city").value = it.name.replace(/^.*\d{5}\s*/, "") || ctx[0] || "";
+  });
 
   $("lf").onsubmit = async (e) => {
     e.preventDefault();
     const err = (m) => { $("lerr").textContent = m; $("lerr").hidden = false; $("lerr").scrollIntoView({ block: "center" }); };
     const data = {
       kind, title: $("l-title").value.trim(), address: $("l-address").value.trim(), city: $("l-city").value.trim(),
-      area: $("l-area").value.trim(), near_university: $("l-uni").value, available_from: $("l-from").value || null,
+      area: $("l-area").value.trim(), available_from: $("l-from").value || null,
       available_to: $("l-to").value || null, size_m2: +$("l-size").value, rent: +$("l-rent").value, lease_rent: +$("l-lease").value,
       tags: TAGS.filter((_, i) => $("l-tag" + i).checked), landlord_name: $("l-llname").value.trim() || null,
       landlord_email: $("l-ll").value.trim() || null,
@@ -90,7 +95,8 @@ export async function renderListingForm(id) {
 
     const btn = $("lsave"); btn.disabled = true; btn.textContent = "Finding the address…";
     try {
-      if (!l || data.address !== l.address || data.city !== l.city) {
+      if (pinned && pinned.name === data.address) { data.lat = pinned.lat; data.lng = pinned.lng; }
+      else if (!l || data.address !== l.address || data.city !== l.city) {
         const g = await geocode(data.address, data.city);
         data.lat = g ? g.lat : null; data.lng = g ? g.lng : null;
         if (!g) toast("We couldn't place this address on a map, so travel times won't show.", "err");

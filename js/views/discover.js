@@ -1,5 +1,5 @@
 // Discover: seekers swipe flats, subletters swipe the students who liked their flat, landlords see their requests.
-import { sb, state, view, go, esc, q, toast, ICON, avatar, photoUrl, floorPlan, travelTo, demandFor, fmtShort, fmtDate } from "../lib.js";
+import { sb, state, view, go, esc, q, toast, ICON, avatar, photoUrl, floorPlan, travelTo, hostPlace, demandFor, fmtShort, fmtDate } from "../lib.js";
 
 const loading = `<p class="loading">Loading…</p>`;
 
@@ -118,7 +118,7 @@ async function seekerDeck() {
     items,
     card: (l) => {
       const d = demandFor(l, stats, inCity);
-      const tr = travelTo(l, p.host_university);
+      const tr = travelTo(l, hostPlace(p));
       const on = starred.has(l.id);
       const owner = l.owner || {};
       const photo = l.photos && l.photos[0];
@@ -132,7 +132,7 @@ async function seekerDeck() {
         <div class="info"><h2>${esc(l.title)}</h2>
           <div class="row"><span class="price">€${l.rent.toLocaleString("en")}<small> / month</small></span>
             <span class="dates">${fmtShort(l.available_from)} → ${fmtDate(l.available_to)}</span></div>
-          ${tr ? `<div class="commute">${ICON.train}<span><b>${tr.minutes} min</b> to ${esc(tr.uni)} by public transport</span></div>` : ""}
+          ${tr ? `<div class="commute">${ICON.train}<span><b>${tr.minutes} min</b> to ${esc(tr.uni)}${p.host_campus ? " (your campus)" : ""} by public transport</span></div>` : ""}
           <div class="host">${avatar(owner.full_name, l.owner_id)}<span><b>${esc(owner.full_name || "Student")}</b>${owner.home_university ? ` · ${esc(owner.home_university)}` : ""}
             ${owner.id_status === "verified" ? ` · <span style="color:var(--ok)">verified</span>` : ""}</span></div>
           <div class="tags">${(l.kind === "room" ? ["Room"] : ["Whole flat"]).concat(l.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div></div>`;
@@ -170,7 +170,7 @@ async function seekerDeck() {
 // ---------- Subletter: swipe the students who liked your flat ----------
 async function ownerDeck() {
   const p = state.profile;
-  const mine = await q(sb.from("listings").select("id, title, rent").eq("owner_id", p.id));
+  const mine = await q(sb.from("listings").select("id, title, rent, lat, lng").eq("owner_id", p.id));
   if (!mine.length) {
     view().innerHTML = `<div class="empty"><span class="eyebrow">Subletter home</span><h3>List your flat to get started</h3>
       <p>Students arriving in your city will see it in their swipe deck. When one says yes, they appear here for you to accept or pass.</p>
@@ -180,7 +180,7 @@ async function ownerDeck() {
   const ids = mine.map((l) => l.id);
   const byId = Object.fromEntries(mine.map((l) => [l.id, l]));
   const [likes, answered] = await Promise.all([
-    q(sb.from("swipes").select("listing_id, seeker_id, created_at, seeker:profiles!swipes_seeker_id_fkey(full_name, home_university, host_university, exchange_from, exchange_to, id_status, student_status)")
+    q(sb.from("swipes").select("listing_id, seeker_id, created_at, seeker:profiles!swipes_seeker_id_fkey(full_name, home_university, host_university, host_lat, host_lng, exchange_from, exchange_to, id_status, student_status)")
       .in("listing_id", ids).eq("by_role", "seeker").eq("liked", true).order("created_at")),
     q(sb.from("swipes").select("listing_id, seeker_id").in("listing_id", ids).eq("by_role", "owner")),
   ]);
@@ -202,6 +202,7 @@ async function ownerDeck() {
         <div class="info">
           <div class="row"><span>${esc(st.home_university || "")}</span><span style="color:var(--muted)">→ ${esc(st.host_university || "")}</span></div>
           ${st.exchange_from ? `<div class="row"><span class="dates">${fmtShort(st.exchange_from)} → ${fmtDate(st.exchange_to)}</span></div>` : ""}
+          ${(() => { const tr = travelTo(byId[s.listing_id] || {}, hostPlace(st)); return tr ? `<div class="commute">${ICON.train}<span><b>${tr.minutes} min</b> from your flat to their school by public transport</span></div>` : ""; })()}
           <div class="host">Interested in <b>${esc(byId[s.listing_id]?.title)}</b></div></div>`;
     },
     onSwipe: async (s, liked) => {
