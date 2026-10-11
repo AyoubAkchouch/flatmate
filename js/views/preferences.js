@@ -1,6 +1,6 @@
 // Preferences: what a seeker looks for, who a subletter wants to sublet to. Editable any time.
 import { sb, state, view, go, esc, q, toast, loadProfile, FEATURES, LIFESTYLE, ICON } from "../lib.js";
-import { searchDestinationSchools, searchAddresses, autocomplete } from "../schools.js";
+import { searchDestinationSchools, autocomplete, campusPicker } from "../schools.js";
 
 export async function renderPreferences() {
   const p = await loadProfile();
@@ -11,7 +11,7 @@ export async function renderPreferences() {
     must_haves: [...(p.must_haves || [])], nice_to_haves: [...(p.nice_to_haves || [])], lifestyle: [...(p.lifestyle || [])],
     min_overlap_pct: p.min_overlap_pct ?? 60, require_verified: p.require_verified ?? true, wanted_lifestyle: [...(p.wanted_lifestyle || [])],
     host: p.host_university ? { name: p.host_university, lat: p.host_lat, lng: p.host_lng } : null,
-    campus: p.host_campus ? { name: p.host_campus, lat: p.host_lat, lng: p.host_lng } : null,
+    campus: p.host_lat != null ? { name: p.host_campus || p.host_university, lat: p.host_lat, lng: p.host_lng } : null,
   };
   // Seekers in "subletting my flat" view edit their ideal tenant instead of their flat search.
   const provider = p.role === "subletter" || (p.role === "seeker" && p.view_mode === "provider");
@@ -38,8 +38,7 @@ export async function renderPreferences() {
       ${seeker ? `
       <section class="pref-sec"><h3>School and campus</h3>
         <div class="field"><span>School you're going to</span><input id="p-host" value="${esc(d.host?.name || "")}" placeholder="Start typing"></div>
-        <div class="field"><span>Campus address <small style="font-weight:400;color:var(--muted)">(optional)</small></span>
-          <input id="p-campus" value="${esc(d.campus?.name || "")}" placeholder="Leave empty to use the school's main site"></div>
+        <div id="p-campus-box"></div>
       </section>
       <section class="pref-sec"><h3>The flat</h3>
         <label class="field"><span>Maximum rent per month</span><input id="p-budget" type="number" min="100" step="10" inputmode="numeric" value="${esc(d.budget_max)}" placeholder="e.g. 800"></label>
@@ -78,8 +77,10 @@ export async function renderPreferences() {
     if (other) view().querySelectorAll(`[data-chips="${other}"] input`).forEach((i) => { i.disabled = d[key].includes(i.value); });
   }));
   if (seeker) {
-    autocomplete(document.getElementById("p-host"), searchDestinationSchools, (it) => { d.host = it; d.campus = null; document.getElementById("p-campus").value = ""; });
-    autocomplete(document.getElementById("p-campus"), searchAddresses, (it) => { d.campus = it; });
+    const campusBox = document.getElementById("p-campus-box");
+    const drawCampus = () => campusPicker(campusBox, d.host, d.campus, (place) => { d.campus = place; });
+    autocomplete(document.getElementById("p-host"), searchDestinationSchools, (it) => { d.host = it; d.campus = null; drawCampus(); });
+    drawCampus();
   }
 
   document.getElementById("pf").onsubmit = async (e) => {
@@ -95,10 +96,8 @@ export async function renderPreferences() {
     } else patch.phone = v("p-phone");
     if (seeker) {
       if (!d.host) return err("Choose the school you're going to from the suggestions.");
-      const campusText = v("p-campus");
-      if (campusText && !d.campus) return err("Choose your campus address from the suggestions, or leave it empty.");
-      const place = campusText ? d.campus : (d.host.lat != null ? { name: null, lat: d.host.lat, lng: d.host.lng } : null);
-      if (!place) return err("We don't have a location for this school: add your campus address.");
+      const place = d.campus;
+      if (!place) return err("Choose your campus, or type its address and pick it from the suggestions.");
       const budget = v("p-budget");
       Object.assign(patch, {
         host_university: d.host.name, host_campus: place.name, host_lat: place.lat, host_lng: place.lng,

@@ -131,3 +131,81 @@ export function autocomplete(input, search, onPick, render = (i) => `<strong>${e
 }
 
 const escHTML = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------- Campuses of a school ----------
+// The campuses and sites of a school, from OpenStreetMap (through Photon): places tagged as a university
+// or college whose name contains the school's name, near the school. E.g. Columbia University →
+// Morningside Heights and Manhattanville; Sorbonne Université → Pierre et Marie Curie, Saint-Cyr…
+const norm = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const GENERIC = new Set(["university", "universite", "universidad", "universita", "universitat", "universidade", "universiteit", "uniwersytet",
+  "college", "school", "ecole", "escuela", "institute", "institut", "instituto", "of", "de", "the", "la", "le", "les", "des", "di", "du", "del", "der", "and", "et", "y", "e", "at", "in"]);
+const kmBetween = (a, b) => {
+  const r = (x) => (x * Math.PI) / 180, dLa = r(b.lat - a.lat), dLo = r(b.lng - a.lng);
+  return 2 * 6371 * Math.asin(Math.sqrt(Math.sin(dLa / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLo / 2) ** 2));
+};
+export async function campusesOf(school) {
+  if (!school?.name) return [];
+  const bias = school.lat != null ? `&lat=${school.lat}&lon=${school.lng}` : "";
+  const j = await getJSON(`${PHOTON}?q=${enc(school.name)}&limit=30&lang=en${bias}&osm_tag=amenity:university&osm_tag=amenity:college`).catch(() => ({ features: [] }));
+  const key = norm(school.name);
+  const words = key.split(" ").filter((w) => w.length > 2 && !GENERIC.has(w));
+  const city = norm(school.city || school.detail || "");
+  let found = (j.features || []).map((f) => {
+    const p = f.properties, n = norm(p.name);
+    const full = n.includes(key);
+    // A partial match must make up most of the other name: "Sorbonne Université - Curie" yes,
+    // "City University of New York" no for New York University.
+    const theirs = n.split(" ").filter((w) => w.length > 2 && !GENERIC.has(w));
+    const loose = words.length > 0 && words.every((w) => theirs.includes(w)) && words.length / Math.max(1, theirs.length) >= 0.6;
+    return (full || loose) && {
+      name: p.name, full,
+      detail: [p.street && [p.housenumber, p.street].filter(Boolean).join(" "), p.district || p.city || p.county, p.country].filter(Boolean).join(", "),
+      lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], place: norm([p.city, p.county, p.state].join(" ")),
+    };
+  }).filter(Boolean);
+  // Keep the ones near the school: its known position, or its city, or the best match.
+  const anchor = school.lat != null ? { lat: school.lat, lng: school.lng }
+    : (city && found.find((c) => c.place.includes(city.split(" ")[0]))) || found.find((c) => c.full) || found[0];
+  if (anchor) found = found.filter((c) => kmBetween(anchor, c) < 60);
+  // Exact name matches first, then drop near-duplicates (the same site mapped twice).
+  found.sort((a, b) => Number(b.full) - Number(a.full));
+  const out = [];
+  for (const c of found) if (!out.some((o) => kmBetween(o, c) < 0.15)) out.push(c);
+  return out.slice(0, 8);
+}
+
+// A "Which campus?" list for a chosen school, with "Somewhere else" for any other address.
+// onChange gets { name, lat, lng } or null. Returns nothing; draws into `box`.
+export async function campusPicker(box, school, current, onChange) {
+  if (!school) { box.innerHTML = ""; onChange(null); return; }
+  box.innerHTML = `<div class="field"><span>Which campus?</span><div class="campus-list"><span class="suggest-msg">Finding the campuses of ${escHTML(school.name)}…</span></div></div>`;
+  const list = await campusesOf(school);
+  const options = list.map((c) => ({ name: c.name, detail: c.detail, lat: c.lat, lng: c.lng }));
+  if (!options.length && school.lat != null) options.push({ name: school.name, detail: `Main site${school.detail ? ", " + school.detail : ""}`, lat: school.lat, lng: school.lng });
+  let pick = current && current.lat != null
+    ? options.findIndex((o) => Math.abs(o.lat - current.lat) < 0.0005 && Math.abs(o.lng - current.lng) < 0.0005)
+    : 0;
+  if (pick < 0) pick = current && current.lat != null ? "other" : 0;
+  if (!options.length) pick = "other";
+  let other = pick === "other" && current ? current : null;
+  const draw = () => {
+    box.innerHTML = `<div class="field"><span>Which campus?</span>
+      <div class="campus-list" role="radiogroup" aria-label="Campus">
+        ${options.map((o, i) => `<label class="campus"><input type="radio" name="campus" value="${i}" ${pick === i ? "checked" : ""}>
+          <span><strong>${escHTML(o.name)}</strong>${o.detail ? `<small>${escHTML(o.detail)}</small>` : ""}</span></label>`).join("")}
+        <label class="campus"><input type="radio" name="campus" value="other" ${pick === "other" ? "checked" : ""}>
+          <span><strong>${options.length ? "Somewhere else" : "Add the address of your campus"}</strong><small>${options.length ? "Type the address where your classes are" : "We couldn't find this school's campuses on the map"}</small></span></label>
+      </div>
+      ${pick === "other" ? `<input id="campus-addr" value="${escHTML(other?.name || "")}" placeholder="Start typing the street and city">` : ""}
+      <small>Each flat shows its travel time to this campus.</small></div>`;
+    box.querySelectorAll('input[name="campus"]').forEach((r) => (r.onchange = () => {
+      pick = r.value === "other" ? "other" : +r.value;
+      draw();
+      if (pick === "other") { onChange(other); box.querySelector("#campus-addr")?.focus(); }
+    }));
+    const addr = box.querySelector("#campus-addr");
+    if (addr) autocomplete(addr, searchAddresses, (it) => { other = it; onChange(it); });
+    if (pick !== "other") onChange(options[pick]);
+  };
+  draw();
+}

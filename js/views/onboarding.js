@@ -1,6 +1,6 @@
 // Sign-up steps: role → details → identity check → student check → done.
 import { sb, state, view, go, esc, q, toast, invite, ICON, loadProfile, storageSafeName, fmtDate } from "../lib.js";
-import { searchHomeUniversities, searchDestinationSchools, searchAddresses, autocomplete } from "../schools.js";
+import { searchHomeUniversities, searchDestinationSchools, autocomplete, campusPicker } from "../schools.js";
 
 const ROLES = {
   seeker: { title: "I'm looking for a flat", d: "You're arriving somewhere on an exchange.", student: true,
@@ -49,7 +49,7 @@ export function renderOnboarding() {
       role: p.role || (invite.get() ? "landlord" : null),
       name: p.full_name || "", uni: p.home_university || "", uniRor: p.home_university_ror || null, homeCity: p.home_city || null,
       host: p.host_university ? { name: p.host_university, lat: p.host_lat, lng: p.host_lng } : null,
-      campus: p.host_campus ? { name: p.host_campus, lat: p.host_lat, lng: p.host_lng } : null, otherCampus: !!p.host_campus,
+      campus: p.host_lat != null ? { name: p.host_campus || p.host_university, lat: p.host_lat, lng: p.host_lng } : null,
       city: p.city || "Paris", from: p.exchange_from || "", to: p.exchange_to || "", phone: p.phone || "",
       ownFlat: null, doc: "passport", docFile: null, selfie: null, cert: null, busy: false, err: "",
     };
@@ -91,7 +91,7 @@ function stepDetails() {
       <label class="field"><span>${cityLabel}</span><input id="d-city" value="${esc(ob.city)}"></label>
       ${ob.role === "seeker" ? `<div class="field"><span>School you're going to</span>
           <input id="d-host" value="${esc(ob.host?.name || "")}" placeholder="Start typing, e.g. Universidad Complutense">
-          <small>Recognised French schools and universities worldwide. Each flat shows its travel time to your campus.</small></div>
+          <small>Recognised French schools and universities worldwide.</small></div>
         <div id="campus"></div>` : ""}
       ${student ? `<div class="two"><label class="field"><span>${ob.role === "seeker" ? "Arriving" : "Leaving"}</span><input id="d-from" type="date" value="${esc(ob.from)}"></label>
         <label class="field"><span>${ob.role === "seeker" ? "Leaving" : "Back"}</span><input id="d-to" type="date" value="${esc(ob.to)}"></label></div>` : ""}
@@ -104,29 +104,14 @@ function stepDetails() {
     if (it) { ob.uni = it.name; ob.homeCity = (it.detail || "").split(",")[0].trim() || null; }
   });
 
+  // Campus: a list of the chosen school's campuses, or any other address.
   const drawCampus = () => {
     const box = document.getElementById("campus");
-    if (!box) return;
-    const h = ob.host;
-    if (!h) { box.innerHTML = ""; return; }
-    const needsAddress = h.lat == null || ob.otherCampus;
-    box.innerHTML = needsAddress
-      ? `<div class="field"><span>Address of your campus</span>
-          <input id="d-campus" value="${esc(ob.campus?.name || "")}" placeholder="Start typing the street and city">
-          <small>${h.lat == null ? "We don't have a location for this school yet, so add the address where your classes are." : "Where most of your classes take place."}</small>
-          ${h.lat != null ? `<button type="button" class="linkbtn" id="mainsite" style="justify-self:start;padding:4px 0">Use the main site instead</button>` : ""}</div>`
-      : `<div class="picked">${ICON.ok}<span>Travel times will be measured to the main site of <b>${esc(h.name)}</b><small>${esc(h.detail || "")}</small></span>
-          <button type="button" class="linkbtn" id="othercampus" style="padding:0">Other campus</button></div>`;
-    const other = document.getElementById("othercampus");
-    if (other) other.onclick = () => { ob.otherCampus = true; drawCampus(); document.getElementById("d-campus").focus(); };
-    const main = document.getElementById("mainsite");
-    if (main) main.onclick = () => { ob.otherCampus = false; ob.campus = null; drawCampus(); };
-    const input = document.getElementById("d-campus");
-    if (input) autocomplete(input, searchAddresses, (it) => { ob.campus = it; });
+    if (box) campusPicker(box, ob.host, ob.campus, (place) => { ob.campus = place; });
   };
   if (ob.role === "seeker") {
-    autocomplete(document.getElementById("d-host"), searchDestinationSchools, (it) => { ob.host = it; ob.otherCampus = false; ob.campus = null; drawCampus(); },
-      (i) => `<strong>${esc(i.name)}</strong><span>${esc([i.detail, i.source === "registry" ? "add the campus address next" : ""].filter(Boolean).join(" · "))}</span>`);
+    autocomplete(document.getElementById("d-host"), searchDestinationSchools, (it) => { ob.host = it; ob.campus = null; drawCampus(); },
+      (i) => `<strong>${esc(i.name)}</strong><span>${esc(i.detail || "")}</span>`);
     drawCampus();
   }
 
@@ -140,8 +125,8 @@ function stepDetails() {
     let place = null;
     if (ob.role === "seeker") {
       if (!ob.host) { ob.err = "Choose the school you're going to from the suggestions."; return draw(); }
-      place = (ob.otherCampus || ob.host.lat == null) ? ob.campus : { name: null, lat: ob.host.lat, lng: ob.host.lng };
-      if (!place) { ob.err = "Choose your campus address from the suggestions."; return draw(); }
+      place = ob.campus;
+      if (!place) { ob.err = "Choose your campus, or type its address and pick it from the suggestions."; return draw(); }
     }
     const btn = document.getElementById("save"); btn.disabled = true; btn.textContent = "Saving…";
     try {
